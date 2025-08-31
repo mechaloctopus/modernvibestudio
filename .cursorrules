@@ -1,0 +1,189 @@
+name: ModernVibeStudio — Engineer Guide
+
+vision:
+  - Real‑time, audio‑reactive visual studio (web, iOS/Android later)
+  - Visuals: Mandala (SVG), Lightning (SVG), ShaderLab (GLSL via gl-react)
+
+tech:
+  - Expo SDK 53 (React Native + Web), TypeScript
+  - State: zustand; UI panels are draggable, collapsible
+  - Audio (web): getUserMedia + Analyser → RMS, bands, centroid, onsets, top‑N notes
+  - Routing matrix: sources (band/group/rms/onset/centroid/note) → param with scale/curve
+  - ShaderLab: gl-react; fragment “body” sets vec3 col; runtime provides uniforms
+
+uniforms (ShaderLab):
+  - u_time, u_res, u_amp, u_centroid, u_note
+  - u_low, u_mid, u_high, u_onset
+  - band(i) where i∈[0..15] via u_bands0..3 and pick4 helper
+  - toneColor(idx), noteColor(midi) from Tone Colors UI (u_pitchR/G/B*)
+  - u_notesA/u_notesAmpA for top 4 notes
+  - u_themeB/u_themeS for global brightness/saturation
+  - generic: u_petals, u_ripple, u_speed, u_zoom, u_detail, u_intensity, u_angle, u_hueShift
+  - note: u_noteAmpInfluence, u_octaveBrightness, u_noteThreshold, u_blipSize
+  - plasma: u_plasmaFocus, u_plasmaSwirl, u_plasmaBandLow/Mid/High, u_plasmaToneBlend, u_plasmaNoteDrive, u_plasmaContrast, u_plasmaScaleX/Y, u_plasmaGlow, u_plasmaWarp
+  - cymatics: u_density, u_nodeSharpness, u_bandBalance, u_harmonicFog
+  - plot: u_smearWidth, u_dripSpeed, u_smearDecay, u_smearJitter, u_gridOpacity, u_groupTintMix
+  - effects: u_fisheyeStrength, u_surfaceA, u_surfaceB, u_surfaceMix, u_shockWidth, u_shockSpeed, u_shockMix, u_bumpAmount, u_light
+  - snakes: u_trailThickness, u_trailLength, u_turnRate, u_zParallax, u_randomness, u_snakeSpeed, u_trailGlow
+
+glsl rules:
+  - WebGL 1 safe: no integer %, no dynamic vec component indexing; use helpers
+  - Keep fragments ≤ ~40 lines; prefer small composable formulas
+  - Clamp final: gl_FragColor = vec4(clamp(col,0.0,1.0), 1.0)
+
+code style:
+  - TypeScript strict, descriptive names, early returns
+  - Avoid deep component trees and redundant panels; reuse Panel/CommandBar
+  - Test: core functions only (mapping, color); keep UI smoke tests minimal
+
+files of interest:
+  - App.tsx — mounts visual, panels, routing application
+  - src/audio/AudioEngine.ts — web audio, features, top‑N notes
+  - src/core/mapping.ts — applySpectrumMapping, applyRoutes
+  - src/core/color.ts — harmony palettes, tone mapping
+  - src/visualizers/mandala/Mandala.tsx — SVG mandala, note‑colored petals, cymatic rotation
+  - src/visualizers/lightning/Lightning.tsx — dynamic bolts, note‑colored, glow
+  - src/visualizers/shaderlab/ShaderLab.tsx — GPU fragment body + uniforms
+
+tests (to keep green):
+  - mapping: applySpectrumMapping() band windows, dB floor
+  - routing: applyRoutes() scaling/curves
+  - color: harmony palettes, midiToNoteName/noteToHueDegrees
+
+shaderlab patterns:
+  - Plasma: multi‑sin summations with band mod, time scroll
+  - Scribbles: many short line tests (sin(dot(...))) with band/notes
+  - Multi‑note: iterate noteAt(i)/noteAmp(i) for distinct colored strokes
+  - Ripples: radius waves gated by u_onset/u_low
+  - Glow: add small color scaled by highs and u_themeB/u_themeS
+
+routing guidance:
+  - Prefer routes over per‑visual ad‑hoc sliders; keep sliders that change structure
+  - Use presets: Low→size, Mid→rotation/push, High→glow/bloom
+
+ui guidance:
+  - One header + CommandBar (quick toggles); Panels are draggable/collapsible
+  - Avoid duplicate panels and non‑functional controls; every slider must affect visuals
+  - ShaderLab shows only preset‑relevant sliders (schema.presets). Group sliders (Animation, Plasma, Cymatics, Plot, Distort, Surface, Shockwave, Lighting, Snakes)
+
+examples:
+  - Audio stripes:
+    float v = step(0.5, fract(uv.x*20.0 + u_time*4.0 + band(0)*8.0));
+    col = mix(vec3(0.05), vec3(0.9,0.6,0.2), v);
+  - Onset ripples:
+    vec2 c = uv - 0.5; float r = length(c);
+    float wave = sin((r*60.0) - u_time*10.0) * (0.3 + 0.7*u_onset);
+    float glow = smoothstep(0.02, 0.0, abs(wave));
+    col = vec3(u_low, u_mid, u_high) * glow + 0.1*vec3(u_amp);
+
+# ModernVibeStudio — Cursor Project Rules
+
+## Vision
+ModernVibeStudio is a real‑time, customizable audio‑reactive visual engine. It ingests live microphone input, extracts spectral/temporal features, maps them to visual parameters, and renders algorithmic art (shader-driven mandalas, particle fields, kaleidoscopes) at interactive frame rates on mobile and desktop.
+
+## Guiding Principles
+- Realtime first: minimize latency from mic → features → visuals.
+- Deterministic core: visuals are pure functions of state; side‑effects isolated.
+- Modular algorithms: each visualizer is a self‑contained module with schema‑defined params.
+- Hot‑swappable: switch algorithms and presets live without full reloads.
+- Testable DSP: math/mapping functions are unit‑tested and benchmarked.
+- GPU‑accelerated visuals: GLSL via `gl-react`/WebGL (Expo/React Native + Web).
+- Progressive enhancement: advanced features on native builds; safe fallbacks in Expo Go/web.
+
+## Technical Decisions
+- Platform: Expo (React Native + TypeScript) for rapid iteration across iOS/Android/Web.
+- Language: TypeScript everywhere. GLSL for shaders.
+- Audio input:
+  - Mobile (Expo Go): `expo-av` mic access; rely on time‑domain + basic FFT via JS (wasm later).
+  - Native/Standalone: enable smaller buffers and audio worklets when possible.
+  - Web: Web Audio API when running as PWA.
+- Rendering: `gl-react` + `gl-react-expo` for GPU shaders; `react-native-reanimated` for UI perf.
+- State: `zustand` for app/algorithm parameter state; immer middleware for ergonomics.
+- Routing: single‑screen app initially, with an overlay menu drawer for parameters.
+- Testing: Jest + @testing-library/react-native; `jest-expo` preset. DSP tests are pure TS.
+- Lint/Format: ESLint (typescript, react), Prettier. Keep code clear and verbose.
+
+## Project Structure
+- `App.tsx` — entry, mounts Visualizer and Menu overlay
+- `src/`
+  - `audio/`
+    - `AudioEngine.ts` — abstraction for mic device, start/stop, frame callbacks
+    - `FeatureExtractors/` — `fft.ts`, `onsets.ts`, `pitch.ts`, `meter.ts`
+  - `core/` — pure functions and types
+    - `types.ts` — shared types (FeatureFrame, VisualParamSchema, VisualizerModule)
+    - `mapping.ts` — sound→color/geometry mappings
+    - `color.ts` — color scales, note→hue mappings
+    - `math.ts` — helpers (smoothstep, lerp, clamp, ema)
+  - `visualizers/` — algorithm modules
+    - `mandala/` — GLSL shaders + TS wrapper
+    - `spectrum/` — bar/radial spectrum
+    - `particles/` — GPGPU/point sprite prototype
+    - each exports `{ id, name, schema, defaultParams, Component }`
+  - `state/`
+    - `useStore.ts` — zustand store: selected visualizer, params, presets
+  - `ui/`
+    - `Menu.tsx` — parameter controls (auto‑generated from schema)
+    - `Knob.tsx`, `Slider.tsx`, `Toggle.tsx`, `ColorPicker.tsx`
+  - `util/` — platform utilities and guards
+  - `tests/` — unit tests for core and audio mapping
+
+## Audio → Visual Pipeline
+1. Capture mic buffer (mono 44.1k/48k); provide ring buffer.
+2. Compute features per frame (worklet/thread when available):
+   - magnitude spectrum (FFT), band‑energy (low/mid/high), spectral centroid, roll‑off
+   - RMS/peak, attack/decay envelopes
+   - onset detection; later: pitch/YIN/CREPE wasm
+3. Map features to visual params via pure functions and schemas (scales, easing, quantization).
+4. Render visualizer module with `gl-react`, passing uniforms derived from params/features.
+5. Maintain latency budget < 50ms end‑to‑end; prefer 128–256 sample blocks where supported.
+
+## Cross‑Platform Strategy
+- Expo Go: limited audio DSP; prioritize efficient JS FFT and parameter metering.
+- Standalone builds: enable lower buffer sizes and worklets; optional native modules.
+- Web: employ WebAudio + OffscreenCanvas for best perf.
+
+## Performance
+- Use frame throttling: feature extraction at audio rate, param updates at visual rate.
+- EMA smoothing on noisy signals; quantize pitch‑to‑note when user enables musical mode.
+- Memoize uniforms; avoid re‑creating GL nodes per frame.
+- Use `useReducedMotion` option for low‑end devices.
+
+## Testing
+- Unit test pure functions in `core/` and `audio/FeatureExtractors`.
+- Snapshot test parameter schemas and UI auto‑forms.
+- Visual smoke tests: render minimal GL node in test env to ensure uniform presence.
+- Add synthetic audio fixtures to validate mappings (sine sweeps, impulses).
+
+## Roadmap (MVP → Beta)
+- MVP
+  - Mic capture + RMS/FFT meter
+  - Visualizer: Radial Spectrum + Mandala shader v1
+  - Menu: switch algorithms, tweak key params; save/load presets (JSON)
+  - Tests for mapping, color scales, EMA smoothing
+- Beta
+  - Onset/pitch detection; particles visualizer
+  - Preset packs and randomizer
+  - Record session (video capture on native builds)
+  - External control: MIDI/OSC (stretch)
+
+## Dev Workflow
+- Start dev server: `npm run start` → use Expo Go or web preview
+- Hot reload for UI; fast refresh for TS
+- Use feature flags in store for experimental modules
+
+## Definition of Done (per feature)
+- Realtime performance validated on a recent iPhone/Android mid‑tier
+- Unit tests for all new pure functions
+- Schema and UI controls wired; defaults sensible
+- README updated with demo and usage notes
+
+## Style & Conventions
+- TypeScript strict mode; explicit types for exports
+- Avoid deep component trees; prefer small, focused modules
+- No global singletons outside `state/useStore`
+- GLSL: keep shaders small; comment intent above functions
+
+## Risks & Mitigations
+- Expo Go audio limitations → provide metering‑only fallback and web demo
+- GPU variability → feature‑detect GL extensions and downscale gracefully
+- Mic permissions UX → clear prompts and error states
