@@ -30,6 +30,14 @@ type StoreState = {
   saveScene: (name: string) => void;
   loadScene: (name: string) => void;
   deleteScene: (name: string) => void;
+  // Sessions (full app state snapshots)
+  saveSession: (name: string) => void;
+  loadSession: (name: string) => void;
+  deleteSession: (name: string) => void;
+  listSessions: () => string[];
+  exportSession: (name: string) => string | undefined;
+  importSession: (name: string, json: string) => void;
+  currentSessionName?: string;
   toneColorEnabled: boolean;
   toneColorKeyOffset: number; // -6..+6 semitones
   toneColorSaturation: number; // 0..1
@@ -106,6 +114,7 @@ export const useStore = create<StoreState>((set, get) => {
   const initial = registry[0];
   const storageKey = 'mvs:presets:v1';
   const sceneKey = 'mvs:scenes:v1';
+  const sessionKey = 'mvs:sessions:v1';
   const pinnedKey = 'mvs:pinned:v1';
   const presetMetaKey = 'mvs:presetMeta:v1';
   const loadAllPresets = (): StoreState['presets'] => {
@@ -121,6 +130,22 @@ export const useStore = create<StoreState>((set, get) => {
     try {
       if (typeof window !== 'undefined' && window.localStorage) {
         window.localStorage.setItem(storageKey, JSON.stringify(presets));
+      }
+    } catch {}
+  };
+  const loadAllSessions = (): Record<string, any> => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const raw = window.localStorage.getItem(sessionKey);
+        if (raw) return JSON.parse(raw);
+      }
+    } catch {}
+    return {};
+  };
+  const saveAllSessions = (sessions: Record<string, any>) => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem(sessionKey, JSON.stringify(sessions));
       }
     } catch {}
   };
@@ -294,6 +319,94 @@ export const useStore = create<StoreState>((set, get) => {
     toneColorSaturation: 0.8,
     toneColorLightness: 0.5,
     setToneColor: (updates) => set(updates as any),
+    // Sessions API
+    saveSession: (name: string) => {
+      const s = get();
+      const sessions = loadAllSessions();
+      sessions[name] = {
+        version: 1,
+        current: { id: s.currentId, params: s.params, presetName: s.currentPresetName },
+        audio: {
+          sensitivity: s.audioSensitivity,
+          inputMode: s.inputMode,
+          rmsSmoothing: s.rmsSmoothing,
+          mapping: s.audioMapping,
+          selectedDeviceId: s.selectedDeviceId,
+        },
+        tone: {
+          enabled: s.toneColorEnabled,
+          keyOffset: s.toneColorKeyOffset,
+          saturation: s.toneColorSaturation,
+          lightness: s.toneColorLightness,
+          map: s.toneColorMap,
+        },
+        theme: { brightness: s.themeBrightness, saturation: s.themeSaturation },
+        routes: s.routes,
+        presets: s.presets,
+        pinned: s.pinnedParams,
+        presetMeta: s.presetMeta,
+      };
+      saveAllSessions(sessions);
+      set({ currentSessionName: name } as any);
+    },
+    loadSession: (name: string) => {
+      const sAll = loadAllSessions();
+      const ss = sAll[name];
+      if (!ss) return;
+      const updates: any = {};
+      if (ss.current && typeof ss.current.id === 'string') {
+        const found = get().visualizers.find(v=> v.id === ss.current.id);
+        if (found) {
+          updates.currentId = found.id;
+          if (ss.current.params && typeof ss.current.params === 'object') updates.params = ss.current.params;
+          if (typeof ss.current.presetName === 'string') updates.currentPresetName = ss.current.presetName;
+        }
+      }
+      if (ss.audio) {
+        if (typeof ss.audio.sensitivity === 'number') updates.audioSensitivity = ss.audio.sensitivity;
+        if (ss.audio.inputMode === 'mic' || ss.audio.inputMode === 'tab') updates.inputMode = ss.audio.inputMode;
+        if (typeof ss.audio.rmsSmoothing === 'number') updates.rmsSmoothing = ss.audio.rmsSmoothing;
+        if (ss.audio.mapping) updates.audioMapping = { ...get().audioMapping, ...ss.audio.mapping };
+        if (typeof ss.audio.selectedDeviceId === 'string' || ss.audio.selectedDeviceId === undefined) updates.selectedDeviceId = ss.audio.selectedDeviceId;
+      }
+      if (ss.tone) {
+        updates.toneColorEnabled = !!ss.tone.enabled;
+        if (typeof ss.tone.keyOffset === 'number') updates.toneColorKeyOffset = ss.tone.keyOffset;
+        if (typeof ss.tone.saturation === 'number') updates.toneColorSaturation = ss.tone.saturation;
+        if (typeof ss.tone.lightness === 'number') updates.toneColorLightness = ss.tone.lightness;
+        if (Array.isArray(ss.tone.map) && ss.tone.map.length === 12) updates.toneColorMap = ss.tone.map;
+      }
+      if (ss.theme) {
+        if (typeof ss.theme.brightness === 'number') updates.themeBrightness = ss.theme.brightness;
+        if (typeof ss.theme.saturation === 'number') updates.themeSaturation = ss.theme.saturation;
+      }
+      if (Array.isArray(ss.routes)) updates.routes = ss.routes;
+      if (ss.presets && typeof ss.presets === 'object') updates.presets = ss.presets;
+      if (ss.pinned && typeof ss.pinned === 'object') updates.pinnedParams = ss.pinned;
+      if (ss.presetMeta && typeof ss.presetMeta === 'object') updates.presetMeta = ss.presetMeta;
+      updates.currentSessionName = name;
+      set(updates);
+    },
+    deleteSession: (name: string) => {
+      const sessions = loadAllSessions();
+      delete sessions[name];
+      saveAllSessions(sessions);
+      if (get().currentSessionName === name) set({ currentSessionName: undefined } as any);
+    },
+    listSessions: () => Object.keys(loadAllSessions()),
+    exportSession: (name: string) => {
+      const sessions = loadAllSessions();
+      const ss = sessions[name];
+      return ss ? JSON.stringify(ss) : undefined;
+    },
+    importSession: (name: string, json: string) => {
+      try {
+        const ss = JSON.parse(json);
+        const sessions = loadAllSessions();
+        sessions[name] = ss;
+        saveAllSessions(sessions);
+      } catch {}
+    },
     audioMapping: {
       scale: 'log',
       magnitudeMode: 'db',

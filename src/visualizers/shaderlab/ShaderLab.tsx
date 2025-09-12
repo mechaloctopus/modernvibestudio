@@ -52,6 +52,13 @@ col = vec3(0.2+0.8*u_amp) * vec3(uv.x, uv.y, 1.0);
 `;
 
 export const PRESET_SOURCES: Record<string, string> = {
+  "Color Test": `
+vec2 q = (p-0.5)*2.0;
+float r = length(q);
+vec3 c = (u_note >= 0.0) ? noteColor(u_note) : vec3(0.0);
+float circle = 1.0 - smoothstep(0.45, 0.48, r);
+col = c * circle;
+`,
   Plasma: `
 float t = u_time * (0.12 + 1.2*u_speed);
 vec2 c = p - 0.5;
@@ -415,6 +422,17 @@ col = clamp(acc, 0.0, 1.0);
 
 // Parameter defaults per preset for quicker auditioning and mobile-friendly performance
 export const PRESET_DEFAULTS: Record<string, any> = {
+  "Color Test": {
+    noteAmpInfluence: 1.0,
+    octaveBrightness: 0.9,
+    noteThreshold: 0.0,
+    blipSize: 0.2,
+    speed: 0.0,
+    zoom: 1.0,
+    detail: 0.0,
+    intensity: 1.0,
+    hueShift: 0.0,
+  },
   Plasma: {
     noteAmpInfluence: 0.1,
     octaveBrightness: 0.45,

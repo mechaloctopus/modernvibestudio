@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Button } from 'react-native';
+import { View, Text, Button, ScrollView } from 'react-native';
 
 export const Panel: React.FC<{ title: string; collapsed: boolean; onToggle: () => void; onClose?: () => void; style?: any; children?: React.ReactNode }>= ({ title, collapsed, onToggle, onClose, style, children }) => {
   return (
@@ -12,8 +12,10 @@ export const Panel: React.FC<{ title: string; collapsed: boolean; onToggle: () =
         </View>
       </View>
       {!collapsed ? (
-        <View style={{ marginTop: 8 }}>
-          {children}
+        <View style={{ marginTop: 8, maxHeight: 480 }}>
+          <ScrollView style={{ maxHeight: 480 }}>
+            {children}
+          </ScrollView>
         </View>
       ) : null}
     </View>

@@ -32,6 +32,7 @@ export const PanelsMenu: React.FC = () => {
       <Button title="Audio" onPress={()=> { openPanel('audio', 'Audio Devices & Mapping'); setShowPanelsMenu(false); }} />
       <Button title="Tone" onPress={()=> { openPanel('tone', 'Tone Colors'); setShowPanelsMenu(false); }} />
       <Button title="Uniforms" onPress={()=> { openPanel('uniforms', 'Live Uniforms'); setShowPanelsMenu(false); }} />
+      <Button title="Sessions" onPress={()=> { openPanel('sessions', 'Sessions'); setShowPanelsMenu(false); }} />
       <Button title="Close" onPress={()=> setShowPanelsMenu(false)} />
     </View>
   );
