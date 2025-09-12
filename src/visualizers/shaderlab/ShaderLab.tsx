@@ -1,5 +1,5 @@
 import React from 'react';
-import { Dimensions, View, Text, Button } from 'react-native';
+import { Dimensions, View, Text, Button, Platform } from 'react-native';
 // @ts-ignore - legacy library lacks types
 import { Shaders, Node, GLSL } from 'gl-react';
 import type { FeatureFrame, VisualizerModule } from '../../core/types';
@@ -7,8 +7,12 @@ import { applySpectrumMapping } from '../../core/mapping';
 import { GLSurface } from '../../ui/GLSurface';
 import { hslToRgb } from '../../core/color';
 import type { ParamRoute } from '../../core/types';
+import { WebGLFragment } from '../../ui/WebGLFragment';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+
+// Helper to pack vec4 uniforms conveniently
+const vec = (x: number, y: number, z: number, w: number): [number, number, number, number] => [x, y, z, w];
 
 type ShaderLabParams = {
   fragment: string; // user fragment body that sets vec3 col
@@ -573,7 +577,7 @@ function saveUserDefaults(map: Record<string, any>) {
 }
 
 function buildShaderSource(userBody: string): string {
-  return `precision highp float;\n\nvarying vec2 uv;\nuniform vec2 u_res;\nuniform float u_time, u_amp, u_centroid, u_note;\nuniform float u_low, u_mid, u_high, u_onset;\nuniform float u_themeB, u_themeS;\nuniform vec4 u_bands0, u_bands1, u_bands2, u_bands3;\nuniform vec4 u_pitchR0, u_pitchR1, u_pitchR2;\nuniform vec4 u_pitchG0, u_pitchG1, u_pitchG2;\nuniform vec4 u_pitchB0, u_pitchB1, u_pitchB2;\nuniform vec4 u_notesA;\nuniform vec4 u_notesAmpA;\nuniform float u_petals;\nuniform float u_ripple;\nuniform float u_speed;\nuniform float u_zoom;\nuniform float u_detail;\nuniform float u_intensity;\nuniform float u_angle;\nuniform float u_hueShift;\nuniform float u_noteAmpInfluence;\nuniform float u_octaveBrightness;\nuniform float u_noteThreshold;\nuniform float u_blipSize;\nuniform float u_plasmaFocus;\nuniform float u_plasmaSwirl;\nuniform float u_plasmaBandLow;\nuniform float u_plasmaBandMid;\nuniform float u_plasmaBandHigh;\nuniform float u_density;\nuniform float u_nodeSharpness;\nuniform float u_bandBalance;\nuniform float u_harmonicFog;\nuniform float u_plasmaToneBlend;\nuniform float u_plasmaNoteDrive;\nuniform float u_plasmaContrast;\nuniform float u_plasmaScaleX;\nuniform float u_plasmaScaleY;\nuniform float u_plasmaGlow;\nuniform float u_plasmaWarp;\nuniform float u_smearWidth;\nuniform float u_dripSpeed;\nuniform float u_smearDecay;\nuniform float u_smearJitter;\nuniform float u_fisheyeStrength;\nuniform float u_shockWidth;\nuniform float u_shockSpeed;\nuniform float u_shockMix;\nuniform float u_bumpAmount;\nuniform float u_light;\nuniform float u_surfaceA;\nuniform float u_surfaceB;\nuniform float u_surfaceMix;\nuniform float u_gridOpacity;\nuniform float u_groupTintMix;\nuniform float u_trailThickness;\nuniform float u_trailLength;\nuniform float u_turnRate;\nuniform float u_zParallax;\nuniform float u_randomness;\nuniform float u_snakeSpeed;\nuniform float u_trailGlow;\nfloat pick4(vec4 v, int i){\n  if(i==0) return v.x;\n  if(i==1) return v.y;\n  if(i==2) return v.z;\n  return v.w;\n}\nfloat band(int i){\n  if(i<4) return pick4(u_bands0, i);\n  else if(i<8) return pick4(u_bands1, i-4);\n  else if(i<12) return pick4(u_bands2, i-8);\n  else return pick4(u_bands3, i-12);\n}\nfloat samplePitch(in vec4 a0,in vec4 a1,in vec4 a2, int i){\n  if(i<4) return pick4(a0, i);\n  else if(i<8) return pick4(a1, i-4);\n  else return pick4(a2, i-8);\n}\nint wrap12(int k){\n  return int(mod(float(k), 12.0));\n}\nvec3 toneColor(int idx){\n  int i = wrap12(idx);\n  float r = samplePitch(u_pitchR0,u_pitchR1,u_pitchR2,i);\n  float g = samplePitch(u_pitchG0,u_pitchG1,u_pitchG2,i);\n  float b = samplePitch(u_pitchB0,u_pitchB1,u_pitchB2,i);\n  vec3 c = vec3(r,g,b);\n  c = mix(vec3(0.0), c, u_themeS);\n  c *= u_themeB;\n  return c;\n}\nvec3 noteColor(float midi){\n  int idx = int(floor(midi+0.5));\n  vec3 nc = toneColor(idx);\n  float bright = clamp((midi - 36.0)/60.0, 0.0, 1.0) * u_octaveBrightness;\n  return mix(nc, vec3(1.0), bright*0.35);\n}\nfloat noteAt(int i){ return pick4(u_notesA, i); }\nfloat noteAmp(int i){ return pick4(u_notesAmpA, i); }\nvoid main(){\n  vec3 col = vec3(0.0);\n  vec2 p = uv;\n  ${userBody}\n  gl_FragColor = vec4(clamp(col,0.0,1.0), 1.0);\n}`;
+  return `#ifdef GL_ES\nprecision highp float;\nprecision highp int;\n#endif\n\nvarying vec2 uv;\nuniform vec2 u_res;\nuniform float u_time, u_amp, u_centroid, u_note;\nuniform float u_low, u_mid, u_high, u_onset;\nuniform float u_themeB, u_themeS;\nuniform vec4 u_bands0, u_bands1, u_bands2, u_bands3;\nuniform vec4 u_pitchR0, u_pitchR1, u_pitchR2;\nuniform vec4 u_pitchG0, u_pitchG1, u_pitchG2;\nuniform vec4 u_pitchB0, u_pitchB1, u_pitchB2;\nuniform vec4 u_notesA;\nuniform vec4 u_notesAmpA;\nuniform float u_petals;\nuniform float u_ripple;\nuniform float u_speed;\nuniform float u_zoom;\nuniform float u_detail;\nuniform float u_intensity;\nuniform float u_angle;\nuniform float u_hueShift;\nuniform float u_noteAmpInfluence;\nuniform float u_octaveBrightness;\nuniform float u_noteThreshold;\nuniform float u_blipSize;\nuniform float u_plasmaFocus;\nuniform float u_plasmaSwirl;\nuniform float u_plasmaBandLow;\nuniform float u_plasmaBandMid;\nuniform float u_plasmaBandHigh;\nuniform float u_density;\nuniform float u_nodeSharpness;\nuniform float u_bandBalance;\nuniform float u_harmonicFog;\nuniform float u_plasmaToneBlend;\nuniform float u_plasmaNoteDrive;\nuniform float u_plasmaContrast;\nuniform float u_plasmaScaleX;\nuniform float u_plasmaScaleY;\nuniform float u_plasmaGlow;\nuniform float u_plasmaWarp;\nuniform float u_smearWidth;\nuniform float u_dripSpeed;\nuniform float u_smearDecay;\nuniform float u_smearJitter;\nuniform float u_fisheyeStrength;\nuniform float u_shockWidth;\nuniform float u_shockSpeed;\nuniform float u_shockMix;\nuniform float u_bumpAmount;\nuniform float u_light;\nuniform float u_surfaceA;\nuniform float u_surfaceB;\nuniform float u_surfaceMix;\nuniform float u_gridOpacity;\nuniform float u_groupTintMix;\nuniform float u_trailThickness;\nuniform float u_trailLength;\nuniform float u_turnRate;\nuniform float u_zParallax;\nuniform float u_randomness;\nuniform float u_snakeSpeed;\nuniform float u_trailGlow;\nfloat pick4(vec4 v, int i){\n  if(i==0) return v.x;\n  if(i==1) return v.y;\n  if(i==2) return v.z;\n  return v.w;\n}\nfloat band(int i){\n  if(i<4) return pick4(u_bands0, i);\n  else if(i<8) return pick4(u_bands1, i-4);\n  else if(i<12) return pick4(u_bands2, i-8);\n  else return pick4(u_bands3, i-12);\n}\nfloat samplePitch(in vec4 a0,in vec4 a1,in vec4 a2, int i){\n  if(i<4) return pick4(a0, i);\n  else if(i<8) return pick4(a1, i-4);\n  else return pick4(a2, i-8);\n}\nint wrap12(int k){\n  return int(mod(float(k), 12.0));\n}\nvec3 toneColor(int idx){\n  int i = wrap12(idx);\n  float r = samplePitch(u_pitchR0,u_pitchR1,u_pitchR2,i);\n  float g = samplePitch(u_pitchG0,u_pitchG1,u_pitchG2,i);\n  float b = samplePitch(u_pitchB0,u_pitchB1,u_pitchB2,i);\n  vec3 c = vec3(r,g,b);\n  c = mix(vec3(0.0), c, u_themeS);\n  c *= u_themeB;\n  return c;\n}\nvec3 noteColor(float midi){\n  int idx = int(floor(midi+0.5));\n  vec3 nc = toneColor(idx);\n  float bright = clamp((midi - 36.0)/60.0, 0.0, 1.0) * u_octaveBrightness;\n  return mix(nc, vec3(1.0), bright*0.35);\n}\nfloat noteAt(int i){ return pick4(u_notesA, i); }\nfloat noteAmp(int i){ return pick4(u_notesAmpA, i); }\nvoid main(){\n  vec3 col = vec3(0.0);\n  vec2 p = uv;\n  ${userBody}\n  gl_FragColor = vec4(clamp(col,0.0,1.0), 1.0);\n}`;
 }
 
 // Minimal safe fallback shader if user/preset compilation fails
@@ -710,6 +714,7 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
   };
 
   const [shader, setShader] = React.useState<any>(() => {
+    if (Platform.OS === 'web') return null; // avoid gl-react on web (React 19 legacy context)
     try {
       return Shaders.create({ user: { frag: GLSL`${buildShaderSource(params.fragment || DEFAULT_FRAGMENT)}` } });
     } catch (e) {
@@ -722,6 +727,7 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
   const [shaderWarning, setShaderWarning] = React.useState<string | null>(null);
 
   React.useEffect(() => {
+    if (Platform.OS === 'web') return; // skip gl-react updates on web
     const userSource = params.fragment || DEFAULT_FRAGMENT;
     try {
       const s = Shaders.create({ user: { frag: GLSL`${buildShaderSource(userSource)}` } });
@@ -797,7 +803,7 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
     } catch {}
   }, []);
 
-  if (!shader) {
+  if (Platform.OS !== 'web' && !shader) {
     return (
       <View style={{ flex: 1, padding: 12 }}>
         <Text style={{ color: 'white' }}>Shader compile error. Showing fallback.</Text>
@@ -805,11 +811,24 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
     );
   }
 
+  // Provide u_res to WebGLFragment to match viewport size dynamically
+  if (Platform.OS === 'web') {
+    uniforms.u_res = [window.innerWidth, window.innerHeight];
+  }
+
   return (
     <View style={{ position: 'absolute', inset: 0 }}>
-      <GLSurface>
-        <Node shader={shader.user} uniforms={uniforms} />
-      </GLSurface>
+      {Platform.OS === 'web' ? (
+        <WebGLFragment
+          fragmentSource={buildShaderSource(params.fragment || DEFAULT_FRAGMENT)}
+          fallbackFragmentSource={buildShaderSource(SAFE_FALLBACK_SOURCE)}
+          uniforms={uniforms}
+        />
+      ) : (
+        <GLSurface>
+          <Node shader={shader.user} uniforms={uniforms} />
+        </GLSurface>
+      )}
     </View>
   );
 };
