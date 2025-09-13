@@ -59,6 +59,140 @@ vec3 c = (u_note >= 0.0) ? noteColor(u_note) : vec3(0.0);
 float circle = 1.0 - smoothstep(0.45, 0.48, r);
 col = c * circle;
 `,
+  "Music Circle": `
+// 12-orb circle: orbs appear only when their note class is detected; size scales with amplitude.
+// amps[12] from top-N detected notes (u_notesA/u_notesAmpA)
+float amps[12];
+for (int i=0; i<12; i++){ amps[i]=0.0; }
+for (int k=0; k<4; k++){
+  float m = noteAt(k);
+  float a = noteAmp(k);
+  if (m >= 0.0) {
+    int idx = int(mod(floor(m+0.5), 12.0));
+    if (idx<0) idx+=12;
+    amps[idx] = max(amps[idx], clamp(a,0.0,1.0));
+  }
+}
+
+// ring positions (clock-like), map index i to pitch class via circle of fifths
+float R = 0.35;
+float soft = 0.02;
+for (int i=0; i<12; i++){
+  int pc = int(mod(float(i*7), 12.0)); // fifths order
+  float theta = (float(i)/12.0) * 6.28318530718;
+  vec2 ctr = vec2(0.5) + vec2(cos(theta), sin(theta)) * R;
+  float amp = amps[pc];
+  float orbR = 0.03 + 0.18*amp;
+  float d = distance(p, ctr);
+  float g = (1.0 - smoothstep(orbR, orbR + soft, d)) * step(0.001, amp);
+  col += toneColor(pc) * g;
+}
+`,
+  "Layered Orbitals": `
+// Central orb pulses with RMS; ring orbs respond to bands; notes add colored sparks
+vec2 C = vec2(0.5);
+vec2 d = p - C; float r = length(d);
+// Base background
+col = vec3(0.01) + vec3(0.02*u_low, 0.02*u_mid, 0.02*u_high);
+// Central orb (loudness)
+float R0 = 0.12 + 0.25*clamp(u_amp,0.0,1.0);
+col += (1.0 - smoothstep(R0, R0+0.02, r)) * vec3(0.6,0.7,0.9);
+// Ring of 12 band orbs (map bands 0..11)
+for (int i=0;i<12;i++){
+  float theta = (float(i)/12.0)*6.28318530718;
+  vec2 ctr = C + vec2(cos(theta), sin(theta)) * 0.33;
+  float b = band(i);
+  float or = 0.035 + 0.15*pow(clamp(b,0.0,1.0), 0.8);
+  float g = 1.0 - smoothstep(or, or+0.015, distance(p, ctr));
+  vec3 c = vec3(0.2) + vec3(0.3,0.2,0.6)*b + vec3(0.2)*u_high;
+  col += c*g;
+}
+// Notes as colored sparks at their pitch class angles
+for (int k=0;k<4;k++){
+  float m = noteAt(k); float a = noteAmp(k);
+  if (m<0.0) break;
+  int pc = int(mod(floor(m+0.5),12.0));
+  float th = (float(pc)/12.0)*6.28318530718 + u_time*0.3;
+  vec2 ctr = C + vec2(cos(th), sin(th)) * (0.33 + 0.05*sin(u_time*1.3 + float(pc)));
+  float or = 0.02 + 0.12*clamp(a,0.0,1.0);
+  float g = 1.0 - smoothstep(or, or+0.01, distance(p, ctr));
+  col += toneColor(pc) * g * (0.6 + 0.4*u_onset);
+}
+// Onset flash
+col *= 1.0 + 0.25*u_onset;
+`,
+  "Beat Tunnel": `
+// Radial tunnel; bass controls zoom, mids swirl, highs star specks; onset shock ring
+vec2 C = vec2(0.5); vec2 q = (p-C);
+float ang = atan(q.y,q.x);
+float rad = length(q);
+float zoom = 0.6 + 0.6*clamp(u_low,0.0,1.0);
+float swirl = 0.7*u_mid;
+float stripes = 0.5+0.5*sin(20.0*log(1.0+rad*6.0) - u_time*2.0*zoom + swirl*ang*4.0);
+vec3 base = mix(vec3(0.05,0.06,0.08), vec3(0.1,0.12,0.16), stripes);
+col = base;
+// Highs add starry specks
+float star = smoothstep(0.998,1.0, fract(sin(dot(p*vec2(123.34,456.21), vec2(12.9898,78.233)))*43758.5453));
+col += vec3(0.8,0.9,1.0) * star * clamp(u_high,0.0,1.0) * 0.5;
+// Onset shock ring
+float ring = 1.0 - smoothstep(0.35 + 0.25*u_onset, 0.37 + 0.25*u_onset, rad);
+col += vec3(1.0,0.8,0.6) * ring * 0.4;
+// Notes tint
+float tint=0.0; int idx=0; for(int i=0;i<4;i++){float m=noteAt(i); if(m<0.0)break; idx = int(mod(floor(m+0.5),12.0)); tint += noteAmp(i);} tint=clamp(tint,0.0,1.0);
+col = mix(col, col + toneColor(idx)*0.6, tint*0.6);
+`,
+  "Polar Bars": `
+// 16 radial bars around center from bands; color shifts by dominant note
+vec2 C=vec2(0.5); vec2 d=p-C; float r=length(d); float a=atan(d.y,d.x); if(a<0.0)a+=6.28318530718;
+int seg = int(mod(floor(a/(6.28318530718/16.0)),16.0));
+float e = clamp(band(seg),0.0,1.0);
+float barLen = 0.18 + 0.55*pow(e,0.8);
+float bar = 1.0 - smoothstep(barLen, barLen+0.02, r);
+// Note tint
+float domA=0.0; int domI=0; for(int i=0;i<4;i++){float m=noteAt(i); float aa=noteAmp(i); if(m<0.0)break; if(aa>domA){domA=aa; domI=int(mod(floor(m+0.5),12.0));}}
+vec3 tint = toneColor(domI);
+col = mix(vec3(0.05), tint, 0.3 + 0.7*bar);
+// highs add sparkle at tips
+float tip = smoothstep(0.86,0.88,r) * (0.2 + 0.8*u_high);
+col += vec3(0.8,0.9,1.0)*tip*0.5;
+`,
+  "Melody Spiral": `
+// Spiral arms influenced by notes; bass tightens spiral; highs add speckle
+vec2 C=vec2(0.5); vec2 u=p-C; float r=length(u); float a=atan(u.y,u.x);
+float k = 3.0 + 6.0*clamp(u_low,0.0,1.0);
+float arm = 0.5+0.5*cos(k*a - 8.0*log(1.0+r*6.0) - u_time*1.2);
+vec3 base = mix(vec3(0.03), vec3(0.12,0.14,0.18), arm);
+col = base;
+for(int i=0;i<4;i++){
+  float m=noteAt(i); float A=noteAmp(i); if(m<0.0)break;
+  int pc=int(mod(floor(m+0.5),12.0)); float th=float(pc)/12.0*6.28318530718;
+  float wave = 0.5+0.5*cos(6.0*(a-th) - u_time*2.0);
+  float glow = smoothstep(0.68,0.98,wave) * (0.2+0.8*A);
+  col += toneColor(pc) * glow * 0.8;
+}
+// highs speckle
+float n = fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);
+col += vec3(n*n*n) * clamp(u_high,0.0,1.0) * 0.25;
+`,
+  "Kaleido Bloom": `
+// 6-way kaleidoscope bloom; bass expands, mids rotates, highs bloom; notes add colored blips
+vec2 C=vec2(0.5); vec2 q=(p-C)*2.0; float r=length(q);
+float rot = u_mid*2.0;
+float ang = atan(q.y,q.x)+rot;
+ang = mod(ang, 6.28318530718/6.0);
+float sym = cos(ang*6.0);
+float pat = 0.5+0.5*cos(8.0*r - u_time*2.0 - 2.0*sym);
+col = mix(vec3(0.04), vec3(0.8,0.5,0.6), pow(pat, 3.0)) * (0.6 + 0.6*u_low);
+// highs bloom
+col += vec3(0.8,0.9,1.0) * pow(clamp(u_high,0.0,1.0), 1.5) * 0.3;
+// notes blips
+for(int i=0;i<4;i++){
+  float m=noteAt(i); float A=noteAmp(i); if(m<0.0)break;
+  int pc=int(mod(floor(m+0.5),12.0)); float th=float(pc)/12.0*6.28318530718;
+  vec2 ctr=C+vec2(cos(th),sin(th))*0.25; float g=1.0-smoothstep(0.03+0.12*A, 0.045+0.12*A, distance(p,ctr));
+  col += toneColor(pc)*g;
+}
+`,
   Plasma: `
 float t = u_time * (0.12 + 1.2*u_speed);
 vec2 c = p - 0.5;
@@ -425,6 +559,17 @@ export const PRESET_DEFAULTS: Record<string, any> = {
   "Color Test": {
     noteAmpInfluence: 1.0,
     octaveBrightness: 0.9,
+    noteThreshold: 0.0,
+    blipSize: 0.2,
+    speed: 0.0,
+    zoom: 1.0,
+    detail: 0.0,
+    intensity: 1.0,
+    hueShift: 0.0,
+  },
+  "Music Circle": {
+    noteAmpInfluence: 1.0,
+    octaveBrightness: 0.8,
     noteThreshold: 0.0,
     blipSize: 0.2,
     speed: 0.0,

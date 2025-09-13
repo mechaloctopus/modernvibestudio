@@ -1,11 +1,12 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View, Platform } from 'react-native';
+import { StyleSheet, Text, View, Platform, Pressable } from 'react-native';
 import React from 'react';
 function useKeyboardShortcuts() {
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
     const handler = (e: KeyboardEvent) => {
       const s = require('./src/state/useStore').useStore.getState();
+      if (e.key === 'Escape' && s.fullscreen) { s.setFullscreen(false); return; }
       if (e.key === 'ArrowRight' && (e.metaKey || e.ctrlKey)) s.nextVisualizer();
       else if (e.key === 'ArrowLeft' && (e.metaKey || e.ctrlKey)) s.prevVisualizer();
       else if (e.key === ']' && (e.metaKey || e.ctrlKey)) s.nextPreset();
@@ -35,7 +36,7 @@ import { PanelManager } from './src/ui/PanelManager';
  
 
 export default function App() {
-  const { visualizers, currentId, setVisualizer, params, audioSensitivity, rmsSmoothing, inputMode, showBandsOverlay, showHud, toneColorEnabled, toneColorKeyOffset, toneColorSaturation, toneColorLightness, toneColorMap, audioMapping, routes, themeBrightness, themeSaturation, setShowShaderLabUi, showHamburger, setShowHamburger, openPanel } = useStore();
+  const { visualizers, currentId, setVisualizer, params, audioSensitivity, rmsSmoothing, inputMode, showBandsOverlay, showHud, toneColorEnabled, toneColorKeyOffset, toneColorSaturation, toneColorLightness, toneColorMap, audioMapping, routes, themeBrightness, themeSaturation, setShowShaderLabUi, showHamburger, setShowHamburger, openPanel, fullscreen, setFullscreen } = useStore();
   const current = visualizers.find((v) => v.id === currentId)!;
   const [frame, setFrame] = React.useState<FeatureFrame | null>(null);
 
@@ -76,16 +77,21 @@ export default function App() {
   useKeyboardShortcuts();
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>ModernVibeStudio</Text>
-          <Text style={styles.subtitle}>Audio‑Reactive Visual Lab{Platform.OS !== 'web' ? ' — Mobile mic soon; web mic works.' : ''}</Text>
+      {/* Header hidden in fullscreen */}
+      {!fullscreen && (
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.title}>ModernVibeStudio</Text>
+            <Text style={styles.subtitle}>Audio‑Reactive Visual Lab{Platform.OS !== 'web' ? ' — Mobile mic soon; web mic works.' : ''}</Text>
+          </View>
+          <CommandBar />
         </View>
-        <CommandBar />
-      </View>
-      <View style={{ paddingHorizontal: 16 }}>
-        <QuickControls />
-      </View>
+      )}
+      {!fullscreen && (
+        <View style={{ paddingHorizontal: 16 }}>
+          <QuickControls />
+        </View>
+      )}
       <View style={styles.visual}>
         <Visual params={{
           ...applyRoutes(routes, currentId, params, {
@@ -101,14 +107,13 @@ export default function App() {
           _global: { toneColorEnabled, toneColorKeyOffset, toneColorSaturation, toneColorLightness, toneColorMap, audioMapping, mappedBands, themeBrightness, themeSaturation }
         }} frame={frame} />
       </View>
-      {/* All detailed editors consolidated in Inspector; overlays available in Panels menu */}
-      {showHud ? <Hud frame={frame} /> : null}
-      <PanelsMenu />
-      <PanelManager frame={frame} />
-      {/* ShaderLab bottom overlay removed */}
-      {showBandsOverlay ? <BandsOverlay frame={frame} /> : null}
-      <StatusBar style="light" />
-      {showHamburger ? (
+      {/* Overlays hidden in fullscreen */}
+      {!fullscreen && showHud ? <Hud frame={frame} /> : null}
+      {!fullscreen && <PanelsMenu />}
+      {!fullscreen && <PanelManager frame={frame} />}
+      {!fullscreen && showBandsOverlay ? <BandsOverlay frame={frame} /> : null}
+      {!fullscreen && <StatusBar style="light" />}
+      {!fullscreen && showHamburger ? (
         <View style={{ position: 'absolute', top: 80, left: 16, backgroundColor: 'rgba(0,0,0,0.7)', padding: 12, borderRadius: 8 }}>
           <Text style={{ color: 'white', fontWeight: 'bold', marginBottom: 8 }}>Menu</Text>
           <View style={{ gap: 8 }}>
@@ -136,6 +141,13 @@ export default function App() {
           </View>
         </View>
       ) : null}
+
+      {/* Fullscreen toggle button overlay */}
+      {!fullscreen && (
+        <Pressable onPress={()=> setFullscreen(true)} style={{ position: 'absolute', right: 16, bottom: 16, backgroundColor: 'rgba(0,0,0,0.6)', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 6 }}>
+          <Text style={{ color: '#fff' }}>Fullscreen</Text>
+        </Pressable>
+      )}
     </View>
   );
 }

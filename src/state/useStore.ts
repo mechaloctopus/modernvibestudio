@@ -52,6 +52,8 @@ type StoreState = {
   // top-level visibility toggles
   showMenu: boolean;
   setShowMenu: (v: boolean) => void;
+  fullscreen: boolean;
+  setFullscreen: (v: boolean) => void;
   showRoutingPanel: boolean;
   setShowRoutingPanel: (v: boolean) => void;
   showUniforms: boolean;
@@ -428,6 +430,8 @@ export const useStore = create<StoreState>((set, get) => {
     showToneColors: false,
     showMenu: false,
     setShowMenu: (v) => set({ showMenu: v }),
+    fullscreen: false,
+    setFullscreen: (v) => set({ fullscreen: v }),
     showRoutingPanel: false,
     setShowRoutingPanel: (v) => set({ showRoutingPanel: v }),
     showUniforms: false,
