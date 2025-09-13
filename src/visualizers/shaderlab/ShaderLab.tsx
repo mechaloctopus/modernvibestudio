@@ -60,31 +60,25 @@ float circle = 1.0 - smoothstep(0.45, 0.48, r);
 col = c * circle;
 `,
   "Music Circle": `
-// 12-orb circle: orbs appear only when their note class is detected; size scales with amplitude.
-// amps[12] from top-N detected notes (u_notesA/u_notesAmpA)
-float amps[12];
-for (int i=0; i<12; i++){ amps[i]=0.0; }
-for (int k=0; k<4; k++){
-  float m = noteAt(k);
-  float a = noteAmp(k);
-  if (m >= 0.0) {
-    int idx = int(mod(floor(m+0.5), 12.0));
-    if (idx<0) idx+=12;
-    amps[idx] = max(amps[idx], clamp(a,0.0,1.0));
-  }
-}
-
-// ring positions (clock-like), map index i to pitch class via circle of fifths
-float R = 0.35;
-float soft = 0.02;
+// 12-orb chromatic circle (clock layout): each orb appears only when that pitch class is detected.
+// Avoids local arrays for WebGL1 compatibility; computes amp per-orb by scanning top notes.
+float R = 0.35;        // ring radius
+float soft = 0.02;     // edge softness
 for (int i=0; i<12; i++){
-  int pc = int(mod(float(i*7), 12.0)); // fifths order
+  int pc = i; // chromatic order around the circle
   float theta = (float(i)/12.0) * 6.28318530718;
   vec2 ctr = vec2(0.5) + vec2(cos(theta), sin(theta)) * R;
-  float amp = amps[pc];
-  float orbR = 0.03 + 0.18*amp;
+  // compute amplitude for this pitch-class by scanning up to 4 notes
+  float ampPC = 0.0;
+  for (int k=0; k<4; k++){
+    float m = noteAt(k); if (m < 0.0) break;
+    int pcNote = int(mod(floor(m+0.5), 12.0)); if (pcNote < 0) pcNote += 12;
+    float isPC = float(pcNote == pc);
+    ampPC = max(ampPC, noteAmp(k) * isPC);
+  }
+  float orbR = 0.02 + 0.22 * clamp(ampPC, 0.0, 1.0);
   float d = distance(p, ctr);
-  float g = (1.0 - smoothstep(orbR, orbR + soft, d)) * step(0.001, amp);
+  float g = (1.0 - smoothstep(orbR, orbR + soft, d)) * step(0.001, ampPC);
   col += toneColor(pc) * g;
 }
 `,
