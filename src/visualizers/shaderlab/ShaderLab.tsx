@@ -60,26 +60,31 @@ float circle = 1.0 - smoothstep(0.45, 0.48, r);
 col = c * circle;
 `,
   "Music Circle": `
-// 12-orb chromatic circle (clock layout): each orb appears only when that pitch class is detected.
-// Avoids local arrays for WebGL1 compatibility; computes amp per-orb by scanning top notes.
-float R = 0.35;        // ring radius
-float soft = 0.02;     // edge softness
+// 12-orb chromatic circle (clock layout).
+// Orbs are always present but dim when not sounded; size and brightness scale with amplitude.
+float PI = 3.14159265;
+float R = 0.36;                 // ring radius
+float s = sin(PI/12.0);
+float L = 2.0 * R * s;          // chord length between adjacent centers
+float minR = L * 0.12;          // minimum radius (dim idle dot)
+float maxR = L * 0.36;          // cap radius so neighbors never overlap
+float soft = minR * 0.6;        // edge softness scales with size
 for (int i=0; i<12; i++){
-  int pc = i; // chromatic order around the circle
-  float theta = (float(i)/12.0) * 6.28318530718;
+  int pc = i; // chromatic order
+  float theta = (float(i)/12.0) * (2.0*PI);
   vec2 ctr = vec2(0.5) + vec2(cos(theta), sin(theta)) * R;
-  // compute amplitude for this pitch-class by scanning up to 4 notes
+  // amplitude for this pitch class from top notes
   float ampPC = 0.0;
   for (int k=0; k<4; k++){
     float m = noteAt(k); if (m < 0.0) break;
     int pcNote = int(mod(floor(m+0.5), 12.0)); if (pcNote < 0) pcNote += 12;
-    float isPC = float(pcNote == pc);
-    ampPC = max(ampPC, noteAmp(k) * isPC);
+    ampPC = max(ampPC, noteAmp(k) * float(pcNote == pc));
   }
-  float orbR = 0.02 + 0.22 * clamp(ampPC, 0.0, 1.0);
+  float r = mix(minR, maxR, clamp(ampPC, 0.0, 1.0));
   float d = distance(p, ctr);
-  float g = (1.0 - smoothstep(orbR, orbR + soft, d)) * step(0.001, ampPC);
-  col += toneColor(pc) * g;
+  float fill = 1.0 - smoothstep(r, r + soft, d);
+  float bright = 0.18 + 0.82 * clamp(ampPC, 0.0, 1.0);
+  col += toneColor(pc) * fill * bright;
 }
 `,
   "Layered Orbitals": `
@@ -187,6 +192,783 @@ for(int i=0;i<4;i++){
   col += toneColor(pc)*g;
 }
 `,
+  "Mountain Fog Beach": `
+// Mountain silhouette with glowing fog and water ripples; audio-reactive but form-preserving.
+
+
+// Aspect-corrected coordinates centered at horizon
+vec2 res = u_res;
+vec2 uv = (p - 0.5);
+uv.x *= res.x / max(res.y, 1.0);
+
+float t = u_time * (0.6 + 1.4*u_speed) + u_onset*0.15;
+
+// Fractal ridge field for mountains
+vec2 q = uv * (1.6 + 0.6*u_detail);
+float field = 0.0;
+vec2 pq = q;
+for (int i=0; i<6; i++){
+  pq = r2(1.7) * pq * 1.6 + vec2(0.11, -0.13);
+  float rid = abs(sin(pq.x + sin(pq.y) + t*0.4));
+  field += rid * pow(0.6, float(i));
+}
+field /= 1.0 + 0.0;
+
+// Mountain mask (higher field -> mountain), horizon slightly below center
+float horizon = -0.05;
+float mountain = smoothstep(0.0, 0.18, field - (uv.y - horizon));
+
+// Water ripples below horizon
+float water = smoothstep(0.02, 0.0, (uv.y - horizon));
+float rip = 0.0;
+if (water > 0.0){
+  float wv = uv.y - horizon;
+  float freq = 34.0 + 26.0*u_mid;
+  rip = 0.5 + 0.5*sin(uv.x*freq + t*2.6*(1.0+0.6*u_low));
+  rip *= 0.6 + 0.6*u_high;
+}
+
+// Note tint from dominant note
+float domA = 0.0; int domI = 0;
+for (int i=0;i<4;i++){ float m=noteAt(i); float a=noteAmp(i); if (m<0.0) break; if (a>domA){ domA=a; domI=int(mod(floor(m+0.5),12.0)); } }
+vec3 noteTint = toneColor(domI);
+
+// Base night color
+vec3 base = mix(vec3(0.05,0.06,0.08), noteTint, 0.15 + 0.35*domA);
+col = base;
+
+// Fog glow near horizon, driven by loudness and bass
+float fog = exp(-abs((uv.y - horizon))*8.0) * (0.35 + 1.2*clamp(u_amp,0.0,1.0));
+col += noteTint * fog * (0.6 + 0.8*u_low);
+
+// Water contribution and soft reflection of mountains
+float refl = mountain * water * (0.4 + 0.6*u_high) * (0.5 + 0.5*rip);
+col += vec3(0.65,0.82,1.0) * refl;
+col += vec3(0.7,0.85,1.0) * rip * water * 0.35;
+
+// Darken mountain silhouette (preserve form)
+col = mix(col, col * (0.35 + 0.65*(1.0 - mountain)), 0.9);
+
+// Add fine sparkle with highs
+float n = fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453);
+col += vec3(n*n*n) * clamp(u_high,0.0,1.0) * 0.12;
+`,
+  "Growing Mountains": `
+// Audio-reactive growing mountain ridges; color tinted by dominant note, rhythm by onset & bands.
+
+vec2 res = u_res; vec2 xy = (p - 0.5);
+xy.x *= res.x / max(res.y, 1.0);
+float t = u_time * (0.5 + 1.2*u_speed) + u_onset*0.12;
+float h = 0.45;
+mat2 m = r2(0.5 + 0.6*u_mid);
+
+// Dominant note tint
+float domA=0.0; int domI=0;
+for (int i=0;i<4;i++){ float mn=noteAt(i); float A=noteAmp(i); if(mn<0.0) break; if (A>domA){ domA=A; domI=int(mod(floor(mn+0.5),12.0)); } }
+vec3 tint = mix(vec3(0.35,0.6,0.9), toneColor(domI), 0.8);
+
+float g = 0.0; vec3 acc = vec3(0.0);
+for (int ii=0; ii<57; ii++){
+  float i = float(ii+1);
+  vec3 pp = vec3(xy * (g) + h*0.0, g) + h; // base position grows with g
+  float s = 4.0; float e = pp.y - g*h*1.3;
+  // inner accumulation loop (fixed steps to keep stable on WebGL1)
+  for (int jj=0; jj<16; jj++){
+    pp.zx = (m * pp.zx);
+    e += cos(t*0.5 + s*pp.x) / max(s, 0.001) * 0.5;
+    s *= 1.4;
+  }
+  g += e * h * (0.8 + 0.4*u_low);
+  // map e to brightness; include highs to add shimmer
+  float br = clamp(e*0.33 + 0.2*u_high, 0.0, 1.0);
+  acc += tint * br;
+}
+// normalize and apply gentle tone/amp response
+col = acc / 57.0;
+col *= (0.6 + 0.6*clamp(u_amp,0.0,1.0));
+`,
+  "Squid": `
+// Organic squid-like swimmer; audio drives color and motion
+
+
+// aspect-corrected coords
+vec2 uv = p - 0.5;
+uv.x *= u_res.x / max(u_res.y, 1.0);
+
+float t = u_time * (0.6 + 1.2*u_mid);
+
+// dominant note tint
+float domA=0.0; int domI=0;
+for (int i=0;i<4;i++){ float mn=noteAt(i); float A=noteAmp(i); if(mn<0.0) break; if (A>domA){ domA=A; domI=int(mod(floor(mn+0.5),12.0)); } }
+vec3 tint = mix(vec3(0.2,0.4,0.8), toneColor(domI), 0.8);
+
+// background (bass lifts, highs add sparkle later)
+col = mix(vec3(0.03,0.04,0.06), tint, 0.08 + 0.25*clamp(u_low,0.0,1.0));
+
+// parametric backbone curve
+float body = 0.0;
+for (int i=0; i<64; i++){
+  float s = float(i)/63.0; // 0..1 head->tail
+  float ph = t*0.9 + s*6.0;
+  vec2 ctr = vec2(0.18*sin(ph), -0.25 + s*0.95 + 0.06*sin(ph*0.5));
+  float rad = 0.08*(1.0 - s)*(0.85 + 0.6*clamp(u_amp,0.0,1.0)) + 0.012;
+  float d = distance(uv, ctr);
+  float seg = 1.0 - smoothstep(rad, rad + 0.006, d);
+  body = max(body, seg);
+}
+
+// simple tentacles near tail using perpendicular offsets
+for (int j=0; j<6; j++){
+  float phase = float(j)*1.0472; // ~PI/3 evenly spaced tentacles
+  for (int k=0; k<24; k++){
+    if (k > int(floor(mix(8.0, 24.0, u_quality)))) break;
+    float s = 0.75 + 0.016*float(k);
+    float ph = t*1.15 + s*7.3 + phase;
+    vec2 c0 = vec2(0.18*sin(ph*0.75), -0.25 + s*0.95 + 0.06*sin(ph*0.4));
+    float eps = 0.005;
+    vec2 c1 = vec2(0.18*sin((t*1.15 + (s+eps)*7.3 + phase)*0.75), -0.25 + (s+eps)*0.95 + 0.06*sin((t*1.15 + (s+eps)*7.3 + phase)*0.4));
+    vec2 dir = normalize(c1 - c0); vec2 n = vec2(-dir.y, dir.x);
+    float wob = (0.02 + 0.06*u_high) * sin(t*2.0 + s*10.0 + phase*1.7) + 0.015*sin(t*1.1 + s*6.0 + phase);
+    vec2 ctr = c0 + n * wob;
+    float tr = 0.007 + 0.011*u_high;
+    float seg = 1.0 - smoothstep(tr, tr+0.004, distance(uv, ctr));
+    body = max(body, seg*0.9);
+  }
+}
+
+// composite color
+col += tint * body * (0.6 + 0.6*clamp(u_amp,0.0,1.0));
+// highs sparkle
+float sp = fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453);
+col += vec3(sp*sp*sp) * clamp(u_high,0.0,1.0) * 0.15;
+`,
+  "Spinning Fractal": `
+// Spinning fractal; audio-reactive rotation, scale, color tint, and brightness
+
+
+// aspect-corrected coords
+vec2 uv = p - 0.5; uv.x *= u_res.x / max(u_res.y, 1.0);
+
+// dominant note tint
+float domA=0.0; int domI=0; for(int i=0;i<4;i++){ float mn=noteAt(i); float A=noteAmp(i); if(mn<0.0)break; if(A>domA){domA=A; domI=int(mod(floor(mn+0.5),12.0));} }
+vec3 noteTint = toneColor(domI);
+
+// background subtle tint with bass
+col = mix(vec3(0.02,0.03,0.05), noteTint, 0.08 + 0.22*clamp(domA + u_low*0.6, 0.0, 1.0));
+
+float t = u_time * (0.5 + 1.0*u_speed) + u_onset*0.05;
+float rot = t*0.4*(1.0 + 0.8*u_mid);
+float scale = 2.0 + 1.2*u_low;
+
+float G = 0.0; vec3 acc = vec3(0.0);
+for (int ii=0; ii<64; ii++){
+  float gi = float(ii+1);
+  vec3 P = vec3(uv*scale + vec2(0.0, 1.45), G - 1.0);
+  P.xz *= r2(rot);
+  float S = 1.0; float E = 1.0;
+  for (int jj=0; jj<20; jj++){
+    P = vec3(0.0, 3.94, -0.7) - abs(abs(P)*E - vec3(2.0, 3.96 + E*0.07, 3.7));
+    float denom = max(dot(P, P*0.41), 1e-3);
+    E = 5.0 / denom; S *= E;
+  }
+  G += P.y / max(S, 1e-3);
+  float shade = log(S) - G*0.1;
+  float val = clamp(shade / 900.0, 0.0, 1.0);
+  float sat = clamp(P.y * 0.4 + 0.1, 0.0, 1.0);
+  vec3 c = mix(vec3(val), noteTint, sat);
+  acc += c * (0.006 + 0.004*u_high);
+}
+col += acc * (0.7 + 0.6*clamp(u_amp,0.0,1.0));
+`,
+  "Spinning Fractal 2": `
+// Variant spinning fractal; audio drives rotation, stability, tint, and brightness
+
+vec2 uv = p - 0.5; uv.x *= u_res.x / max(u_res.y, 1.0);
+float t = u_time * (0.5 + 1.0*u_speed) + u_onset*0.04;
+float rot = t*0.3*(1.0 + 0.6*u_mid);
+float jitter = cos(t*0.6) * 0.1;
+
+// dominant note tint
+float domA=0.0; int domI=0; for(int i=0;i<4;i++){ float mn=noteAt(i); float A=noteAmp(i); if(mn<0.0)break; if(A>domA){domA=A; domI=int(mod(floor(mn+0.5),12.0));}}
+vec3 noteTint = toneColor(domI);
+col = mix(vec3(0.02,0.03,0.05), noteTint, 0.08 + 0.22*clamp(domA + u_low*0.5, 0.0, 1.0));
+
+float G=0.0; vec3 acc=vec3(0.0);
+for (int ii=0; ii<72; ii++){
+  float gi=float(ii+1);
+  vec3 P=vec3(uv*2.0, G - 0.8);
+  P.xz *= r2(rot);
+  float S=1.0, E=1.01;
+  for (int jj=0; jj<13; jj++){
+    P = vec3(0.0, 3.5, 3.0) - abs(abs(P)*E - vec3(3.0, 1.8 + 0.2*cos(t*0.6), 3.0));
+    float denom = max(dot(P, P + jitter) - 0.1, 1e-3);
+    E = max(1.01, 9.5 / denom);
+    S *= E;
+  }
+  float lenY = length(P.yy);
+  G += mod(lenY, P.y) / max(S, 1e-3) * 0.5;
+  float sat = clamp(P.x*0.6, -1.0, 1.0) * 0.5 + 0.5;
+  vec3 c = mix(vec3(0.0), noteTint, sat);
+  acc += c * (S/12000.0) * (0.8 + 0.6*u_high);
+}
+col += acc * (0.7 + 0.6*clamp(u_amp,0.0,1.0));
+`,
+  "Celestial Tunnel": `
+// Celestial tunnel: spinning depth field; audio drives motion, brightness, and tint
+
+vec2 xy = p - 0.5; xy.x *= u_res.x / max(u_res.y, 1.0);
+float t2 = u_time * (0.6 + 1.2*u_speed) + u_onset*0.05;
+vec3 d = vec3(xy*0.6 + vec2(0.0, 0.6), 1.0);
+d.xz *= r2(t2*0.4*(1.0+0.8*u_mid));
+
+// dominant note tint
+float dA=0.0; int dI=0; for(int i=0;i<4;i++){ float mn=noteAt(i); float A=noteAmp(i); if(mn<0.0)break; if(A>dA){dA=A; dI=int(mod(floor(mn+0.5),12.0));} }
+vec3 tint = toneColor(dI);
+col = mix(vec3(0.02,0.03,0.05), tint, 0.08 + 0.25*clamp(u_low + dA*0.6, 0.0, 1.0));
+
+float q = clamp(u_quality, 0.3, 1.0);
+float iterLim = mix(22.0, 60.0, q);
+float innerLimF = mix(4.0, 12.0, q);
+float E=0.0, G=0.0; float RV=1.0; vec3 Q=vec3(0.0); vec3 acc2=vec3(0.0);
+for (int ii=0; ii<60; ii++){
+  if (float(ii) > iterLim) break;
+  float fi=float(ii+1);
+  E += fi * 1e-9;
+  Q += d * E * RV * mix(0.45, 0.25, q); // march faster at low quality
+  vec3 P = Q; float s=3.0;
+  G += P.y/s;
+  RV = max(length(P), 1e-3);
+  P = vec3(log2(RV) + t2*0.2, exp2(mod(-P.z, s)/RV) - 0.3, P.y);
+  // inner accumulation
+  float e=0.0; float ss=s;
+  for (int jj=0; jj<12; jj++){
+    if (float(jj) > innerLimF) break;
+    e += -abs(dot(sin(P.xz*ss), cos(P.zy*ss)) / max(ss,1e-3) * 0.4);
+    ss += ss;
+  }
+  float shade = e - G*0.1;
+  float val = clamp(shade / 200.0, 0.0, 1.0); // visibility boost
+  vec3 c = mix(vec3(val), tint, 0.35 + 0.35*clamp(u_amp,0.0,1.0));
+  acc2 += c * (0.02 + 0.014*u_high);
+}
+col += acc2 * (0.75 + 0.6*clamp(u_amp,0.0,1.0));
+`,
+  "Vortex": `
+// Vortex field; audio drives twist, pace, and musical tint
+
+
+vec2 uv = p - 0.5; uv.x *= u_res.x / max(u_res.y, 1.0);
+float t = u_time * (0.7 + 0.8*u_speed) + u_onset*0.07;
+
+// dominant note tint and music tint
+float domA=0.0; int domI=0; for(int i=0;i<4;i++){ float mn=noteAt(i); float A=noteAmp(i); if(mn<0.0)break; if(A>domA){domA=A; domI=int(mod(floor(mn+0.5),12.0));} }
+vec3 noteTint = toneColor(domI);
+vec3 musicTint = vec3(u_low, u_mid, u_high);
+
+// init pseudo-random z from uv
+float z = fract(sin(dot(uv, vec2(12.9898,78.233))) * 43758.5453);
+vec3 acc = vec3(0.0);
+float qv = clamp(u_quality, 0.3, 1.0);
+float iterLimV = mix(25.0, 100.0, qv);
+float innerLimV = mix(2.0, 9.0, qv);
+for (int ii=0; ii<100; ii++){
+  if (float(ii) > iterLimV) break;
+  // ray dir based on z and uv; push forward in z
+  vec3 dir = normalize(vec3(uv*2.0, 1.0));
+  vec3 p3 = z * dir; p3.z += 6.0;
+  // swirl via mids
+  p3.xz *= r2(t*0.4*(1.0+0.8*u_mid));
+  // inner path accumulation
+  float d = 1.0; vec3 q = p3;
+  for (int jj=0; jj<9; jj++){
+    if (float(jj) > innerLimV) break;
+    q += cos(q.yzx * d - t) / d;
+    d /= 0.8;
+  }
+  float stepLen = (0.002 + abs(length(q) - 0.5) / 40.0) * mix(1.8, 1.0, qv);
+  z += stepLen * (0.8 + 0.6*u_low);
+  vec3 c = (sin(vec3(z - t + vec3(6.0,2.0,4.0))) + 1.5) / max(stepLen, 1e-3);
+  acc += c * (0.7 + 0.7*u_high);
+}
+// compress and tint
+vec3 outc = acc / (vec3(1.0) + abs(acc));
+vec3 tint = mix(noteTint, musicTint, 0.35 + 0.35*clamp(domA,0.0,1.0));
+col = mix(outc*0.6, outc, 0.5) * (0.6 + 0.6*clamp(u_amp,0.0,1.0));
+col = mix(col, col * tint, 0.6);
+`,
+  "Nebulae": `
+// Nebulae: layered cosmic tunnel; audio drives pace, detail, and musical tint
+vec2 uv = p - 0.5; uv.x *= u_res.x / max(u_res.y, 1.0);
+float tt = u_time * (0.6 + 1.2*u_speed) + u_onset*0.05;
+
+// dominant note tint
+float domA=0.0; int domI=0; for(int i=0;i<4;i++){ float mn=noteAt(i); float A=noteAmp(i); if(mn<0.0)break; if(A>domA){domA=A; domI=int(mod(floor(mn+0.5),12.0));} }
+vec3 noteTint = toneColor(domI);
+
+float z=0.0; vec3 acc=vec3(0.0);
+for (int ii=0; ii<100; ii++){
+  vec3 p = z * normalize(vec3(uv*2.0, 1.0));
+  p.z += 9.0;
+  vec3 v = p;
+  float d = 1.0;
+  for (int jj=0; jj<9; jj++){
+    p += 0.5 * sin(p.yzx * d + tt) / d;
+    d += d;
+  }
+  float dlen = 6.0 - length(v);
+  float s = cos(dlen + tt) + 0.4 * dot(cos(p), sin(p/0.7).yzx);
+  float stepD = 0.2 * (abs(s) - min(dlen, -dlen*0.1));
+  z += stepD * (0.8 + 0.6*u_low);
+  vec3 c = (cos(vec3(s*10.0 + z + vec3(0.0,2.0,9.0))) + 1.3) / max(stepD, 1e-3);
+  acc += c * (0.9 + 0.6*u_high);
+}
+vec3 outc = acc / (vec3(1.0) + abs(acc));
+col = mix(outc, outc * noteTint, 0.35 + 0.35*clamp(domA,0.0,1.0));
+col *= (0.6 + 0.6*clamp(u_amp,0.0,1.0));
+`,
+  "Gridbreak": `
+// Gridbreak: cosine lattice broken by phase; audio-driven pace and tint
+vec2 uv = p - 0.5; uv.x *= u_res.x / max(u_res.y, 1.0);
+float tt = u_time * (0.6 + 1.2*u_speed) + u_onset*0.05;
+
+// dominant note tint
+float domA=0.0; int domI=0; for(int i=0;i<4;i++){ float mn=noteAt(i); float A=noteAmp(i); if(mn<0.0)break; if(A>domA){domA=A; domI=int(mod(floor(mn+0.5),12.0));} }
+vec3 tint = toneColor(domI);
+
+float z = 0.0; vec3 acc = vec3(0.0);
+vec3 dirBase = normalize(vec3(uv*2.0, 1.0));
+for (int ii=0; ii<50; ii++){
+  vec3 p3 = z * dirBase; p3.z -= tt;
+  vec3 v = cos(p3) - sin(p3).yzx;
+  vec3 w = max(v, v.yzx*0.2);
+  float d = 0.5 * length(w);
+  z += d * (0.8 + 0.6*u_low);
+  vec3 c = (cos(p3) + 1.2) / max(d, 1e-3);
+  acc += c * (0.8 + 0.6*u_high);
+}
+vec3 outc = acc / (acc + vec3(1000.0));
+col = mix(outc, outc * tint, 0.35 + 0.35*clamp(domA,0.0,1.0));
+col *= (0.6 + 0.6*clamp(u_amp,0.0,1.0));
+`,
+  "Astral Travel": `
+// Astral Travel: iterative astral tunnel; audio drives pace, rotation, and tint
+
+vec2 uv = p - 0.5; uv.x *= u_res.x / max(u_res.y, 1.0);
+float tt = u_time * (0.6 + 1.2*u_speed) + u_onset*0.05;
+
+// Dominant note tint
+float domA=0.0; int domI=0;
+for (int i=0;i<4;i++){ float mn=noteAt(i); float A=noteAmp(i); if(mn<0.0) break; if(A>domA){ domA=A; domI=int(mod(floor(mn+0.5),12.0)); } }
+vec3 tint = toneColor(domI);
+
+vec3 q = vec3(uv*0.8, 0.1);
+q.zx -= 1.0;
+vec3 d = vec3(uv, 0.1);
+float R=1.0;
+vec3 acc = vec3(0.0);
+float ql = clamp(u_quality, 0.3, 1.0);
+float iterLimAT = mix(30.0, 99.0, ql);
+float innerLimAT = mix(3.0, 9.0, ql);
+for (int ii=0; ii<99; ii++){
+  if (float(ii) > iterLimAT) break;
+  float s = 2.0;
+  // advance along direction with audio-coupled pace (bigger steps at low quality)
+  q += d * max(1e-4, R) * (0.7 * (0.8 + 0.6*u_low)) * mix(1.25, 1.0, ql);
+  vec3 p3 = q;
+  R = length(p3);
+  // remap into feature space
+  vec3 pp = vec3(
+    log2(max(R,1e-3)) - tt*0.5*(1.0+0.6*u_mid),
+    exp2(0.9 - p3.z/max(R,1e-3)),
+    atan(p3.y, p3.x) + cos(tt*0.5)*(0.1 + 0.08*u_low)
+  );
+  float eLoc = pp.y - 1.0;
+  // inner accumulation (bounded doublings)
+  float ss = s;
+  for (int jj=0; jj<9; jj++){
+    if (float(jj) > innerLimAT) break;
+    vec3 a = cos(pp.yzy*ss) - 0.5;
+    vec3 b = vec3(1.0) - cos(pp*ss);
+    eLoc += dot(a, b) / max(ss,1e-3) * 0.3;
+    ss += ss;
+  }
+  float val = clamp(min(eLoc*ss, 0.4 - eLoc) / 12.0, 0.0, 1.0);
+  vec3 c = mix(vec3(val), tint, 0.35 + 0.35*clamp(domA,0.0,1.0));
+  acc += c * (0.7 + 0.6*u_high);
+}
+vec3 outc = acc / (vec3(1.0) + abs(acc));
+col = outc * (0.6 + 0.6*clamp(u_amp,0.0,1.0));
+`,
+  "Spinning Fractal 3": `
+// Spinning Fractal 3: audio-reactive rotation, depth and note tint
+
+vec2 uv = p - 0.5; uv.x *= u_res.x / max(u_res.y, 1.0);
+
+// dominant note tint
+float domA=0.0; int domI=0; for(int i=0;i<4;i++){ float mn=noteAt(i); float A=noteAmp(i); if(mn<0.0)break; if(A>domA){domA=A; domI=int(mod(floor(mn+0.5),12.0));} }
+vec3 noteTint = toneColor(domI);
+
+// background tint by bass
+col = mix(vec3(0.02,0.03,0.05), noteTint, 0.08 + 0.22*clamp(u_low + domA*0.5, 0.0, 1.0));
+
+float t = u_time * (0.5 + 1.0*u_speed) + u_onset*0.05;
+float rot = t*0.4*(1.0 + 0.8*u_mid);
+
+float G=0.0; vec3 acc=vec3(0.0);
+for (int ii=0; ii<72; ii++){
+  vec3 P = vec3(uv + vec2(0.0, 1.0), G - 1.0);
+  P.zx *= r2(rot);
+  float S = 1.3; float E = 1.0;
+  for (int jj=0; jj<20; jj++){
+    P = vec3(0.0, 3.95, -0.7) - abs(abs(P)*E - vec3(2.7, 3.95 + E*0.104, 3.82));
+    float denom = max(dot(P, P*0.5), 1e-3);
+    E = 5.0 / denom; S *= E;
+  }
+  G += P.y / max(S, 1e-3);
+  float shade = log(S) - G*0.5;
+  float val = clamp(shade / 900.0, 0.0, 1.0);
+  float sat = clamp(P.y - 0.4, 0.0, 1.0);
+  vec3 c = mix(vec3(val), noteTint, sat);
+  acc += c * (0.006 + 0.004*u_high);
+}
+col += acc * (0.7 + 0.6*clamp(u_amp,0.0,1.0));
+`,
+  "Black Hole": `
+// Black Hole: fog spiraling into a singularity; audio drives swirl, flow, and tint
+
+
+vec2 uv = p - 0.5; uv.x *= u_res.x / max(u_res.y, 1.0);
+float t = u_time * (0.6 + 1.2*u_speed) + u_onset*0.05;
+
+// dominant note tint & band tint
+float domA=0.0; int domI=0; for(int i=0;i<4;i++){ float mn=noteAt(i); float A=noteAmp(i); if(mn<0.0)break; if(A>domA){domA=A; domI=int(mod(floor(mn+0.5),12.0));} }
+vec3 noteTint = toneColor(domI);
+vec3 bandTint = vec3(u_low, u_mid, u_high);
+vec3 tint = mix(noteTint, bandTint, 0.35 + 0.35*clamp(domA,0.0,1.0));
+
+// Base coordinate per original idea
+vec2 d = vec2(-1.0, 1.0);
+vec2 pp = uv / 0.7; // slightly zoomed like original
+vec2 t5 = 5.0*pp - d;
+float den = max(0.1 + 5.0/dot(t5, t5), 1e-3);
+mat2 M = mat2(1.0, 1.0, d.x*den, d.y*den);
+vec2 c = (pp * M);
+vec2 v = c;
+
+// Swirl rotation depends on mids
+float ang = log(max(length(v), 1e-3)) + t*0.2*(1.0+0.8*u_mid);
+v *= r2(ang) * 5.0;
+
+vec3 acc = vec3(0.0);
+float qb = clamp(u_quality, 0.3, 1.0);
+float maxIB = floor(mix(4.0, 9.0, qb));
+for (int i=0; i<9; i++){
+  if (float(i) > maxIB) break;
+  v += 0.7 * sin(vec2(v.y, v.x) * float(i+1) + t) / float(i+1) + 0.5;
+  vec4 samp = sin(vec4(v.x, v.y, v.y, v.x)) + 1.0;
+  acc += samp.rgb * (0.7 + 0.5*u_high);
+}
+
+// Fog density and black hole falloff
+float r = length(uv);
+float hole = 1.0 / (0.03 + abs(r - 0.7));
+float flare = exp(0.3*c.y - dot(c,c));
+vec3 outc = 1.0 - exp(-exp(c.x*vec3(0.6,-0.4,-1.0)) / (acc + vec3(1e-3)) / (0.1 + 0.1*pow(length(sin(v/0.3)*0.2 + c*vec2(1.0,2.0)) - 1.0, 2.0)) / (1.0 + 7.0*flare)) * 0.2;
+// accretion disk/ring around the singularity (coherent ring)
+float r0 = 0.55;
+float w = 0.08 + 0.06*(1.0 - qb);
+float ring = exp(-pow((r - r0)/w, 2.0));
+vec3 diskCol = mix(vec3(1.0), tint, 0.5);
+outc += diskCol * ring * (0.25 + 0.35*clamp(u_low + u_mid, 0.0, 1.0));
+
+// Apply tint and loudness
+col = mix(outc*0.6, outc, 0.6) * (0.8 + 0.8*clamp(u_amp,0.0,1.0));
+col = mix(col, col * tint, 0.6);
+`,
+  "Hyperspace": `
+// Hyperspace: modular corridor with quantized rotations; audio drives pace, swirl, and tint
+
+vec2 uv = p - 0.5; uv.x *= u_res.x / max(u_res.y, 1.0);
+float T = u_time * (0.6 + 1.2*u_speed) + u_onset*0.05;
+
+// dominant note tint and bands tint
+float domA=0.0; int domI=0; for(int ii=0; ii<4; ii++){ float mn=noteAt(ii); float A=noteAmp(ii); if(mn<0.0) break; if(A>domA){ domA=A; domI=int(mod(floor(mn+0.5),12.0)); } }
+vec3 noteTint = toneColor(domI);
+vec3 bandTint = vec3(u_low, u_mid, u_high);
+vec3 tint = mix(noteTint, bandTint, 0.35 + 0.35*clamp(domA,0.0,1.0));
+
+vec3 rd = normalize(vec3(uv*1.2, 1.0));
+float t = 0.0; vec3 acc = vec3(0.0);
+float qh = clamp(u_quality, 0.3, 1.0);
+float iterLimH = mix(24.0, 60.0, qh);
+for (int i=0; i<60; i++){
+  if (float(i) > iterLimH) break;
+  vec3 p3 = t*0.5*rd; p3.z -= T; // forward march
+  // wrap into modular tiles
+  vec2 zx = p3.zx; zx = mod(zx + 9.0, 18.0) - 9.0; p3.zx = zx;
+  // quantized rotation around y
+  float ang = atan(p3.z, p3.x);
+  float angQ = round(ang*7.0)/7.0; // ~7 sectors
+  float ca = cos(angQ), sa = sin(angQ);
+  p3.zx = mat2(ca,-sa,sa,ca) * p3.zx;
+  vec3 R = abs(p3);
+  p3.x -= pow(R.y*0.5, 2.5) + sin(p3.y*4.0 + T*8.0) * sin(T) * 0.4; // corridor shape
+  p3.y = mod(p3.y + T, 0.2) - 0.1; // slicing
+  float d = abs(length(p3) - 0.1) + 0.01;
+  t += d * ((0.85 + 0.6*u_low) * mix(1.6, 1.0, qh));
+  vec3 add = (1.0 + cos(R.y + 4.0 + vec3(0.0,1.0,2.0))) * (0.05 / (d + 1.0));
+  acc += add * (0.8 + 0.6*u_high);
+}
+// tone + loudness finishing
+vec3 outc = acc / (vec3(1.0) + abs(acc));
+col = mix(outc, outc * tint, 0.35 + 0.35*clamp(domA,0.0,1.0));
+col *= (0.6 + 0.6*clamp(u_amp,0.0,1.0));
+`,
+  "Infinite Clouds": `
+// Infinite Clouds: drifting layered clouds; audio drives pace, rotation, brightness, and note tint
+
+vec2 uv = p - 0.5; uv.x *= u_res.x / max(u_res.y, 1.0);
+float tt = u_time * (0.6 + 1.2*u_speed) + u_onset*0.05;
+
+// Dominant note tint
+float domA=0.0; int domI=0;
+for (int ii=0; ii<4; ii++){ float mn=noteAt(ii); float A=noteAmp(ii); if(mn<0.0) break; if (A>domA){ domA=A; domI=int(mod(floor(mn+0.5),12.0)); } }
+vec3 tint = toneColor(domI);
+
+vec3 q = vec3(uv - vec2(0.2, 0.0), 0.4);
+q.yz -= 1.0;
+vec3 dir = vec3(uv, 0.4);
+float R = 1.0;
+vec3 acc = vec3(0.0);
+float qi = clamp(u_quality, 0.3, 1.0);
+float iterLimIC = mix(30.0, 99.0, qi);
+float innerLimIC = mix(3.0, 10.0, qi);
+for (int ii=0; ii<99; ii++){
+  if (float(ii) > iterLimIC) break;
+  float s = 1.0;
+  // advance with bass-coupled pace (larger step at lower quality)
+  q += dir * max(R, 1e-4) * 0.3 * (0.8 + 0.6*u_low) * mix(1.25, 1.0, qi);
+  vec3 p3 = q;
+  R = length(p3);
+  // feature remap with mid-driven rotation/time
+  vec3 pp = vec3(
+    log2(max(R,1e-3)) - tt*0.6*(1.0+0.6*u_mid),
+    exp(-p3.z/max(R,1e-3) + 0.5),
+    atan(p3.x, p3.y) - tt*0.3
+  );
+  float eVal = pp.y - 1.0;
+  float ss = s;
+  for (int jj=0; jj<10; jj++){
+    if (float(jj) > innerLimIC) break;
+    vec3 a = cos(pp.zxy*ss);
+    vec3 b = (vec3(0.2) - sin(tt*0.3 - pp*ss));
+    eVal += -abs(dot(a, b)) / max(ss,1e-3) * 0.24;
+    ss += ss;
+  }
+  // color value from original min(e*s*e/.01, .4-e)/9 term
+  float val = clamp(min(eVal*ss*eVal/0.01, 0.4 - eVal) / 6.0, 0.0, 1.0);
+  vec3 c = mix(vec3(val), tint, 0.35 + 0.35*clamp(domA,0.0,1.0));
+  acc += c * (0.7 + 0.6*u_high);
+}
+vec3 outc = acc / (vec3(1.0) + abs(acc));
+col = outc * (0.6 + 0.6*clamp(u_amp,0.0,1.0));
+`,
+  "Space-Time Fabric": `
+// Space-Time Fabric: wavy triangular mesh; audio drives warp, line brightness, and tint
+
+vec2 uv = p; // base uv 0..1
+float t = u_time * (0.6 + 1.2*u_speed);
+float dy = uv.y - 0.5;
+// displacement field (influenced by bass and mids)
+float d = 0.12*fbm(uv*vec2(6.0,3.0) + vec2(0.0, -t*3.0*(1.0+0.4*u_mid)))
+        + 0.12*fbm(uv*vec2(2.0,5.0) + vec2(t*(1.0+0.5*u_low), 0.0))
+        + dy * 0.15;
+vec2 w = uv; w.y += d; // warp fabric vertically
+
+// Triangular mesh from three stripe families
+float freq = 18.0;
+float thick = mix(0.018, 0.008, clamp(u_amp,0.0,1.0));
+float l1 = smoothstep(thick, 0.0, abs(fract(w.x*freq) - 0.5));
+vec2 w2 = (r2(3.14159265/3.0) * (w-0.5)) + 0.5;
+float l2 = smoothstep(thick, 0.0, abs(fract(w2.x*freq) - 0.5));
+vec2 w3 = (r2(-3.14159265/3.0) * (w-0.5)) + 0.5;
+float l3 = smoothstep(thick, 0.0, abs(fract(w3.x*freq) - 0.5));
+float lines = clamp(l1 + l2 + l3, 0.0, 1.0);
+
+// dominant note tint
+float domA=0.0; int domI=0; for(int i=0;i<4;i++){ float mn=noteAt(i); float A=noteAmp(i); if(mn<0.0)break; if(A>domA){domA=A; domI=int(mod(floor(mn+0.5),12.0));} }
+vec3 tint = toneColor(domI);
+
+// line brightness driven by highs; background subtle by bass
+vec3 bg = mix(vec3(0.02,0.03,0.05), tint, 0.08 + 0.2*clamp(u_low,0.0,1.0));
+vec3 lineCol = mix(vec3(0.8,0.9,1.0), tint, 0.6) * (0.5 + 0.6*u_high);
+col = bg + lineCol * lines;
+// RMS lifts
+col *= (0.7 + 0.6*clamp(u_amp,0.0,1.0));
+`,
+  "Flying Over Mountains": `
+// Flying Over Mountains: layered ridges from log/exp/atan remap; audio drives pace, rotation, brightness, and tint
+
+vec2 uv = p - 0.5; uv.x *= u_res.x / max(u_res.y, 1.0);
+float tt = u_time * (0.6 + 1.2*u_speed) + u_onset*0.05;
+
+// Dominant note tint
+float domA=0.0; int domI=0; for (int ii=0; ii<4; ii++){ float mn=noteAt(ii); float A=noteAmp(ii); if(mn<0.0) break; if (A>domA){ domA=A; domI=int(mod(floor(mn+0.5),12.0)); } }
+vec3 tint = toneColor(domI);
+
+vec3 q = vec3(uv + vec2(-0.5, 0.4), 1.0);
+q.yz -= 1.0;
+vec3 d = vec3(uv + vec2(-0.5, 0.4), 1.0);
+float R = 1.0;
+vec3 acc = vec3(0.0);
+for (int ii=0; ii<99; ii++){
+  float s = 1.0;
+  // march forward with bass-coupled pace
+  q += d * max(R, 1e-4) * 0.3 * (0.85 + 0.6*u_low);
+  vec3 p3 = q;
+  R = length(p3);
+  // feature remap (time and mid influence rotation)
+  vec3 pp = vec3(
+    log2(max(R,1e-3)) - tt*0.5,
+    exp2(-p3.z/max(R,1e-3) - 0.01),
+    atan(p3.y, p3.x) * s + cos(tt) * (0.03 + 0.02*u_mid)
+  );
+  float eLoc = pp.y - 1.0;
+  float ss = s;
+  for (int jj=0; jj<10; jj++){
+    vec3 A = sin(vec3(pp.z, pp.z, pp.y) * ss) - vec3(0.53);
+    vec3 B = vec3(0.5) - sin(vec3(pp.y, pp.z, pp.x) * ss);
+    eLoc += dot(A, B) / max(ss,1e-3) * 0.2;
+    ss += ss;
+  }
+  float val = clamp((eLoc * R) / 12.0, 0.0, 1.0);
+  vec3 c = mix(vec3(val), tint, 0.35 + 0.35*clamp(domA,0.0,1.0));
+  acc += c * (0.7 + 0.6*u_high);
+}
+vec3 outc = acc / (vec3(1.0) + abs(acc));
+col = outc * (0.6 + 0.6*clamp(u_amp,0.0,1.0));
+`,
+  "Strange Entities": `
+// Strange Entities: swarm of noise-driven points; audio drives flow, size, and tint
+mat2 r2(float a){ float c=cos(a), s=sin(a); return mat2(c,-s,s,c); }
+float hash12(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
+float noise2(vec2 p){ vec2 i=floor(p), f=fract(p); float a=hash12(i), b=hash12(i+vec2(1,0)); float c=hash12(i+vec2(0,1)), d=hash12(i+vec2(1,1)); vec2 u=f*f*(3.0-2.0*f); return mix(mix(a,b,u.x), mix(c,d,u.x), u.y); }
+
+vec2 uv = p - 0.5; uv.x *= u_res.x / max(u_res.y, 1.0);
+float tt = u_time * (0.5 + 1.0*u_speed);
+
+// dominant note tint
+float domA=0.0; int domI=0; for(int ii=0; ii<4; ii++){ float mn=noteAt(ii); float A=noteAmp(ii); if(mn<0.0) break; if(A>domA){ domA=A; domI=int(mod(floor(mn+0.5),12.0)); } }
+vec3 tint = toneColor(domI);
+
+// background lift by bass
+col = mix(vec3(0.02,0.03,0.05), tint, 0.08 + 0.25*clamp(u_low,0.0,1.0));
+
+float aspect = u_res.x / max(u_res.y, 1.0);
+for (int i=0; i<140; i++){
+  float s = float(i) + 1.0;
+  vec2 h = vec2(hash12(vec2(s, s*1.37)), hash12(vec2(s*2.13, s*0.91)));
+  vec2 pos0 = (h - 0.5) * vec2(1.6*aspect, 1.6);
+  float sp = 0.35 + 0.9*u_mid + 0.3*u_low;
+  float ang = 6.2831853 * noise2(pos0*3.0 + vec2(tt*0.4*sp, -tt*0.2*sp));
+  vec2 flow = vec2(cos(ang), sin(ang));
+  vec2 pos = pos0 + flow * (0.18*sin(tt*0.7 + s) + 0.22*cos(tt*0.35 + s*1.7));
+  float r = mix(0.0025, 0.012, clamp(u_amp, 0.0, 1.0));
+  float d = distance(uv, pos);
+  float alpha = smoothstep(r, 0.0, d);
+  vec3 ptCol = mix(vec3(0.85,0.9,1.0), tint, 0.6) * (0.35 + 0.65*clamp(u_high,0.0,1.0));
+  col += ptCol * alpha * 0.6;
+}
+`,
+  "Vibrant Tunnel": `
+// Vibrant tunnel inspired by @kishimisu; audio-reactive tint and motion using toneColor mapping
+
+vec2 V = u_res, i = (p*2.0 - 1.0);
+i.x *= V.x / max(V.y, 1.0);
+float b = u_time * 0.8;
+float r = sin(b*0.5)*0.2 + 0.7;
+float a = 0.0, n = 0.0, t = 0.0;
+
+// dominant note tint blended with bands
+float domA=0.0; int domI=0; for(int k=0;k<4;k++){ float mn=noteAt(k); float A=noteAmp(k); if(mn<0.0)break; if(A>domA){domA=A; domI=int(mod(floor(mn+0.5),12.0));} }
+vec3 noteTint = toneColor(domI);
+vec3 bandTint = vec3(u_low, u_mid, u_high);
+vec3 tint = mix(noteTint, bandTint, 0.35 + 0.35*clamp(domA,0.0,1.0));
+
+vec3 Oacc = vec3(0.0);
+for (a=0.0; a<60.0; a+=1.0){
+  vec4 add = vec4(0.0);
+  vec3 p3 = t * normalize(vec3((Rm(b/4.0) * i), 1.0));
+  p3.xz *= Rm(t*0.03 * (1.0 + 0.8*u_mid));
+  p3.z += b;
+  vec3 q = p3;
+  p3.xy *= Rm(floor(p3.z/0.07)*0.2 + b*0.5);
+  p3.x = abs(p3.x) - 0.5;
+  p3.z = mod(p3.z, 0.07) - 0.035;
+  float nloc = length(p3) - 0.02;
+  float t2 = abs(length(vec2(length(mod(q.xy+r,r+r)-r)-0.5, p3.z)) - 0.02) + 0.003;
+  float stepv = min(nloc, t2);
+  t += stepv * (0.85 + 0.6*u_low);
+  add = 0.06 * (1.0 + cos(t*0.7 + b + length(i) + vec4(0.0,1.0,2.0,0.0))) * (0.53 + sin(t+t + b*4.0)*0.5) / (0.2 + max(n,1e-3)/0.1);
+  vec3 add3 = add.rgb * (0.7 + 0.6*u_high);
+  Oacc += add3;
+}
+vec3 Oc = tanh(Oacc);
+col = mix(Oc, Oc * tint, 0.5) * (0.6 + 0.6*clamp(u_amp,0.0,1.0));
+`,
+  "Fractal Pyramid": `
+// Fractal Pyramid: ray-marched rotating pyramid fractal; audio drives color palette and motion
+mat2 r2(float a){ float c=cos(a), s=sin(a); return mat2(c,-s,s,c); }
+
+vec3 palette(float d, vec3 tc){
+  // blend between cool and tint color
+  return mix(vec3(0.2,0.7,0.9), tc, clamp(d,0.0,1.0));
+}
+
+float mapF(vec3 p, float t){
+  for (int i=0; i<8; ++i){
+    p.xz = (r2(t) * p.xz);
+    p.xy = (r2(t*1.89) * p.xy);
+    p.xz = abs(p.xz);
+    p.xz -= 0.5;
+  }
+  return dot(sign(p), p) / 5.0;
+}
+
+vec4 rmPyr(vec3 ro, vec3 rd, float t, vec3 tc){
+  float tt = 0.0; vec3 col = vec3(0.0); float d=1.0;
+  for (int i=0; i<64; i++){
+    vec3 p = ro + rd * tt;
+    d = mapF(p, t) * 0.5;
+    if (d < 0.02) break;
+    if (d > 100.0) break;
+    col += palette(length(p)*0.1, tc) / (400.0 * max(d, 1e-3));
+    tt += d;
+  }
+  return vec4(col, 1.0/(d*100.0));
+}
+
+vec2 uv = (p - 0.5);
+uv.x *= u_res.x / max(u_res.y, 1.0);
+vec3 ro = vec3(0.0, 0.0, -50.0);
+float t = u_time * (0.7 + 1.0*u_speed);
+ro.xz = (r2(t) * ro.xz);
+vec3 cf = normalize(-ro);
+vec3 cs = normalize(cross(cf, vec3(0.0,1.0,0.0)));
+vec3 cu = normalize(cross(cf, cs));
+vec3 uuv = ro + cf*3.0 + uv.x*cs + uv.y*cu;
+vec3 rd = normalize(uuv - ro);
+
+// dominant note tint blended with band tint
+float domA=0.0; int domI=0; for(int k=0;k<4;k++){ float mn=noteAt(k); float A=noteAmp(k); if(mn<0.0)break; if(A>domA){domA=A; domI=int(mod(floor(mn+0.5),12.0));} }
+vec3 noteTint = toneColor(domI);
+vec3 bandTint = vec3(u_low, u_mid, u_high);
+vec3 tint = mix(noteTint, bandTint, 0.35 + 0.35*clamp(domA,0.0,1.0));
+
+vec4 col4 = rmPyr(ro, rd, t*(1.0 + 0.7*u_mid), tint);
+vec3 col3 = col4.rgb * (0.6 + 0.6*clamp(u_amp,0.0,1.0));
+col = col3;
+`,
   Plasma: `
 float t = u_time * (0.12 + 1.2*u_speed);
 vec2 c = p - 0.5;
@@ -261,7 +1043,7 @@ for (int i=0;i<4;i++){
 }
 col = clamp(acc, 0.0, 1.0);
 `,
-  
+
   /* Removed: CymaticsRadialModes */
   /*CymaticsRadialModes: `
 vec2 q = (p-0.5)*2.0; float t = u_time * (0.05 + 0.8*u_speed);
@@ -386,7 +1168,7 @@ for (int i=0;i<4;i++){
 }
 col = clamp(base + acc*(0.7+0.6*u_intensity), 0.0, 1.0);
 `,*/
-  
+
   CymaticsDualSource: `
 // Two-wave interference pattern (moving sources)
 vec2 q = (p-0.5)*2.0; float t = u_time*(0.2+1.8*u_speed);
@@ -425,7 +1207,7 @@ vec3 notesAcc = vec3(0.0);
 for (int i=0;i<4;i++){ float mn = noteAt(i); if(mn<0.0) break; notesAcc += noteColor(mn) * noteAmp(i); }
 col = clamp(mix(pal, pal*tint, 0.35) + notesAcc*0.3, 0.0, 1.0);
 `,*/
-  
+
   BumpySphereAudio: `
 // Fake bumpy sphere shading in 2D with audio bumps
 vec2 q = (p-0.5)*2.0; float r = length(q);
@@ -441,7 +1223,7 @@ vec3 base = vec3(u_low,u_mid,u_high) * (0.15 + 0.85*diff*u_light);
 vec3 notesAcc = vec3(0.0); for(int i=0;i<4;i++){ float mn = noteAt(i); if(mn<0.0) break; notesAcc += noteColor(mn)*noteAmp(i); }
 col = clamp(mix(base, notesAcc, 0.4) * mask, 0.0, 1.0);
 `,
-  
+
   PlotNotesScatter: `
 // Plot top notes as dots; size and brightness follow amplitude, fade as amp drops
 // Slightly zoomed out to reveal full plot area on various aspect ratios
@@ -734,7 +1516,12 @@ function saveUserDefaults(map: Record<string, any>) {
 }
 
 function buildShaderSource(userBody: string): string {
-  return `#ifdef GL_ES\nprecision highp float;\nprecision highp int;\n#endif\n\nvarying vec2 uv;\nuniform vec2 u_res;\nuniform float u_time, u_amp, u_centroid, u_note;\nuniform float u_low, u_mid, u_high, u_onset;\nuniform float u_themeB, u_themeS;\nuniform vec4 u_bands0, u_bands1, u_bands2, u_bands3;\nuniform vec4 u_pitchR0, u_pitchR1, u_pitchR2;\nuniform vec4 u_pitchG0, u_pitchG1, u_pitchG2;\nuniform vec4 u_pitchB0, u_pitchB1, u_pitchB2;\nuniform vec4 u_notesA;\nuniform vec4 u_notesAmpA;\nuniform float u_petals;\nuniform float u_ripple;\nuniform float u_speed;\nuniform float u_zoom;\nuniform float u_detail;\nuniform float u_intensity;\nuniform float u_angle;\nuniform float u_hueShift;\nuniform float u_noteAmpInfluence;\nuniform float u_octaveBrightness;\nuniform float u_noteThreshold;\nuniform float u_blipSize;\nuniform float u_plasmaFocus;\nuniform float u_plasmaSwirl;\nuniform float u_plasmaBandLow;\nuniform float u_plasmaBandMid;\nuniform float u_plasmaBandHigh;\nuniform float u_density;\nuniform float u_nodeSharpness;\nuniform float u_bandBalance;\nuniform float u_harmonicFog;\nuniform float u_plasmaToneBlend;\nuniform float u_plasmaNoteDrive;\nuniform float u_plasmaContrast;\nuniform float u_plasmaScaleX;\nuniform float u_plasmaScaleY;\nuniform float u_plasmaGlow;\nuniform float u_plasmaWarp;\nuniform float u_smearWidth;\nuniform float u_dripSpeed;\nuniform float u_smearDecay;\nuniform float u_smearJitter;\nuniform float u_fisheyeStrength;\nuniform float u_shockWidth;\nuniform float u_shockSpeed;\nuniform float u_shockMix;\nuniform float u_bumpAmount;\nuniform float u_light;\nuniform float u_surfaceA;\nuniform float u_surfaceB;\nuniform float u_surfaceMix;\nuniform float u_gridOpacity;\nuniform float u_groupTintMix;\nuniform float u_trailThickness;\nuniform float u_trailLength;\nuniform float u_turnRate;\nuniform float u_zParallax;\nuniform float u_randomness;\nuniform float u_snakeSpeed;\nuniform float u_trailGlow;\nfloat pick4(vec4 v, int i){\n  if(i==0) return v.x;\n  if(i==1) return v.y;\n  if(i==2) return v.z;\n  return v.w;\n}\nfloat band(int i){\n  if(i<4) return pick4(u_bands0, i);\n  else if(i<8) return pick4(u_bands1, i-4);\n  else if(i<12) return pick4(u_bands2, i-8);\n  else return pick4(u_bands3, i-12);\n}\nfloat samplePitch(in vec4 a0,in vec4 a1,in vec4 a2, int i){\n  if(i<4) return pick4(a0, i);\n  else if(i<8) return pick4(a1, i-4);\n  else return pick4(a2, i-8);\n}\nint wrap12(int k){\n  return int(mod(float(k), 12.0));\n}\nvec3 toneColor(int idx){\n  int i = wrap12(idx);\n  float r = samplePitch(u_pitchR0,u_pitchR1,u_pitchR2,i);\n  float g = samplePitch(u_pitchG0,u_pitchG1,u_pitchG2,i);\n  float b = samplePitch(u_pitchB0,u_pitchB1,u_pitchB2,i);\n  vec3 c = vec3(r,g,b);\n  c = mix(vec3(0.0), c, u_themeS);\n  c *= u_themeB;\n  return c;\n}\nvec3 noteColor(float midi){\n  int idx = int(floor(midi+0.5));\n  vec3 nc = toneColor(idx);\n  float bright = clamp((midi - 36.0)/60.0, 0.0, 1.0) * u_octaveBrightness;\n  return mix(nc, vec3(1.0), bright*0.35);\n}\nfloat noteAt(int i){ return pick4(u_notesA, i); }\nfloat noteAmp(int i){ return pick4(u_notesAmpA, i); }\nvoid main(){\n  vec3 col = vec3(0.0);\n  vec2 p = uv;\n  ${userBody}\n  gl_FragColor = vec4(clamp(col,0.0,1.0), 1.0);\n}`;
+  return `#ifdef GL_ES\nprecision highp float;\nprecision highp int;\n#endif\n\nvarying vec2 uv;\nuniform vec2 u_res;\nuniform float u_time, u_amp, u_centroid, u_note;\nuniform float u_low, u_mid, u_high, u_onset;\nuniform float u_themeB, u_themeS;\nuniform vec4 u_bands0, u_bands1, u_bands2, u_bands3;\nuniform vec4 u_pitchR0, u_pitchR1, u_pitchR2;\nuniform vec4 u_pitchG0, u_pitchG1, u_pitchG2;\nuniform vec4 u_pitchB0, u_pitchB1, u_pitchB2;\nuniform vec4 u_notesA;\nuniform vec4 u_notesAmpA;\nuniform float u_petals;\nuniform float u_ripple;\nuniform float u_speed;\nuniform float u_zoom;\nuniform float u_detail;\nuniform float u_intensity;\nuniform float u_angle;\nuniform float u_hueShift;\nuniform float u_noteAmpInfluence;\nuniform float u_octaveBrightness;\nuniform float u_noteThreshold;\nuniform float u_blipSize;\nuniform float u_plasmaFocus;\nuniform float u_plasmaSwirl;\nuniform float u_plasmaBandLow;\nuniform float u_plasmaBandMid;\nuniform float u_plasmaBandHigh;\nuniform float u_density;\nuniform float u_nodeSharpness;\nuniform float u_bandBalance;\nuniform float u_harmonicFog;\nuniform float u_plasmaToneBlend;\nuniform float u_plasmaNoteDrive;\nuniform float u_plasmaContrast;\nuniform float u_plasmaScaleX;\nuniform float u_plasmaScaleY;\nuniform float u_plasmaGlow;\nuniform float u_plasmaWarp;\nuniform float u_smearWidth;\nuniform float u_dripSpeed;\nuniform float u_smearDecay;\nuniform float u_smearJitter;\nuniform float u_fisheyeStrength;\nuniform float u_shockWidth;\nuniform float u_shockSpeed;\nuniform float u_shockMix;\nuniform float u_bumpAmount;\nuniform float u_light;\nuniform float u_surfaceA;\nuniform float u_surfaceB;\nuniform float u_surfaceMix;\nuniform float u_gridOpacity;\nuniform float u_groupTintMix;\nuniform float u_trailThickness;\nuniform float u_trailLength;\nuniform float u_turnRate;\nuniform float u_zParallax;\nuniform float u_randomness;\nuniform float u_snakeSpeed;\nuniform float u_trailGlow;\nfloat pick4(vec4 v, int i){\n  if(i==0) return v.x;\n  if(i==1) return v.y;\n  if(i==2) return v.z;\n  return v.w;\n}\nfloat band(int i){\n  if(i<4) return pick4(u_bands0, i);\n  else if(i<8) return pick4(u_bands1, i-4);\n  else if(i<12) return pick4(u_bands2, i-8);\n  else return pick4(u_bands3, i-12);\n}\nfloat samplePitch(in vec4 a0,in vec4 a1,in vec4 a2, int i){\n  if(i<4) return pick4(a0, i);\n  else if(i<8) return pick4(a1, i-4);\n  else return pick4(a2, i-8);\n}\nint wrap12(int k){\n  return int(mod(float(k), 12.0));\n}\nvec3 toneColor(int idx){\n  int i = wrap12(idx);\n  float r = samplePitch(u_pitchR0,u_pitchR1,u_pitchR2,i);\n  float g = samplePitch(u_pitchG0,u_pitchG1,u_pitchG2,i);\n  float b = samplePitch(u_pitchB0,u_pitchB1,u_pitchB2,i);\n  vec3 c = vec3(r,g,b);\n  c = mix(vec3(0.0), c, u_themeS);\n  c *= u_themeB;\n  return c;\n}\nvec3 noteColor(float midi){\n  int idx = int(floor(midi+0.5));\n  vec3 nc = toneColor(idx);\n  float bright = clamp((midi - 36.0)/60.0, 0.0, 1.0) * u_octaveBrightness;\n  return mix(nc, vec3(1.0), bright*0.35);\n}\nfloat noteAt(int i){ return pick4(u_notesA, i); }\nfloat noteAmp(int i){ return pick4(u_notesAmpA, i); }
+// Sanity uniforms
+uniform float u_sanityBrightness;
+uniform float u_sanityTintStrength;
+uniform float u_sanityFloor;\n\n// Shared helpers available to all presets (global scope)\nmat2 r2(float a){ float c=cos(a), s=sin(a); return mat2(c,-s,s,c); }\nmat2 Rm(float a){ return r2(a); }\nfloat hash12(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }\nfloat noise(vec2 p){ vec2 i=floor(p), f=fract(p); float a=hash12(i), b=hash12(i+vec2(1.0,0.0)); float c=hash12(i+vec2(0.0,1.0)), d=hash12(i+vec2(1.0,1.0)); vec2 u=f*f*(3.0-2.0*f); return mix(mix(a,b,u.x), mix(c,d,u.x), u.y); }\nfloat noise2(vec2 p){ return noise(p); }\nfloat fbm(vec2 p){ float v=0.0; float a=0.5; mat2 m=r2(0.5); for(int i=0;i<4;i++){ v+=a*noise(p); p=m*p*2.0; a*=0.5; } return v; }\nvec3 palette(float d, vec3 tc){ return mix(vec3(0.2,0.7,0.9), tc, clamp(d,0.0,1.0)); }\nfloat mapF(vec3 p, float t){ for (int i=0;i<8;i++){ p.xz = r2(t) * p.xz; p.xy = r2(t*1.89) * p.xy; p.xz = abs(p.xz); p.xz -= 0.5; } return dot(sign(p), p)/5.0; }\nvec4 rmPyr(vec3 ro, vec3 rd, float t, vec3 tc){ float tt=0.0; vec3 col=vec3(0.0); float d=1.0; for(int i=0;i<64;i++){ vec3 p=ro+rd*tt; d = mapF(p, t)*0.5; if (d<0.02) break; if (d>100.0) break; col += palette(length(p)*0.1, tc) / (400.0 * max(d, 1e-3)); tt += d; } return vec4(col, 1.0/(d*100.0)); }\n\nvoid main(){\n  vec3 col = vec3(0.0);\n  vec2 p = uv;\n  ${userBody}\n  vec3 outc = max(col, vec3(u_sanityFloor)) * (0.5 + 0.5*u_sanityBrightness);
+  gl_FragColor = vec4(clamp(outc,0.0,1.0), 1.0);\n}`;
 }
 
 // Minimal safe fallback shader if user/preset compilation fails
@@ -868,6 +1655,12 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
     u_randomness: Math.max(0.0, Math.min(1.0, ((params as any).randomness ?? 0.2))),
     u_snakeSpeed: Math.max(0.0, Math.min(1.0, ((params as any).snakeSpeed ?? 0.4))),
     u_trailGlow: Math.max(0.0, Math.min(1.0, ((params as any).trailGlow ?? 0.5))),
+    // sanity uniforms
+    u_sanityBrightness: Math.max(0.0, Math.min(2.0, ((params as any).sanityBrightness ?? 0.7))),
+    u_sanityTintStrength: Math.max(0.0, Math.min(1.0, ((params as any).sanityTintStrength ?? 0.5))),
+    u_sanityFloor: Math.max(0.0, Math.min(1.0, ((params as any).sanityFloor ?? 0.08))),
+    // quality uniform for shader-side LOD choices
+    u_quality: Math.max(0.3, Math.min(1.0, ((params as any).quality ?? 1.0))),
   };
 
   const [shader, setShader] = React.useState<any>(() => {
@@ -969,7 +1762,16 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
   }
 
   // Provide u_res to WebGLFragment to match viewport size dynamically
+  let effectiveScale = 1.0;
+  let effectiveFPS = 60;
   if (Platform.OS === 'web') {
+    // Performance: adjust render scale / fps if UI overlays are open
+    const uiState = require('../../state/useStore').useStore.getState();
+    const uiActive = !!(uiState.showMenu || uiState.showLibrary || uiState.showInspector || uiState.showPanelsMenu || uiState.showRoutingPanel || uiState.showUniforms);
+    const baseScale = Math.max(0.3, Math.min(1.0, ((params as any).renderScale ?? 0.85)));
+    effectiveScale = uiActive ? baseScale * 0.6 : baseScale;
+    const baseFPS = Math.max(15, Math.min(120, ((params as any).maxFPS ?? 60)));
+    effectiveFPS = uiActive ? Math.min(baseFPS, 30) : baseFPS;
     uniforms.u_res = [window.innerWidth, window.innerHeight];
   }
 
@@ -980,6 +1782,8 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
           fragmentSource={buildShaderSource(params.fragment || DEFAULT_FRAGMENT)}
           fallbackFragmentSource={buildShaderSource(SAFE_FALLBACK_SOURCE)}
           uniforms={uniforms}
+          renderScale={effectiveScale}
+          maxFPS={effectiveFPS}
         />
       ) : (
         <GLSurface>
@@ -995,6 +1799,14 @@ export const ShaderLabModule: VisualizerModule = {
   name: 'ShaderLab',
   schema: {
     fragment: { type: 'string', default: DEFAULT_FRAGMENT, description: 'GLSL fragment code body; set vec3 col', multiline: true },
+    // Sanity knobs (global to ShaderLab presets)
+    sanityBrightness: { type: 'number', min: 0, max: 2, step: 0.01, default: 0.7, description: 'Global brightness multiplier for safety', group: 'Sanity' },
+    sanityTintStrength: { type: 'number', min: 0, max: 1, step: 0.01, default: 0.5, description: 'Strength of musical tint (note/band mix)', group: 'Sanity' },
+    sanityFloor: { type: 'number', min: 0, max: 1, step: 0.01, default: 0.08, description: 'Minimum brightness floor so visuals are visible', group: 'Sanity' },
+    // Performance knobs
+    quality: { type: 'number', min: 0.3, max: 1, step: 0.01, default: 1.0, description: 'Shader quality hint (affects loops/LOD if used by preset)', group: 'Performance' },
+    renderScale: { type: 'number', min: 0.3, max: 1, step: 0.01, default: 0.85, description: 'Render resolution scale (lower = faster)', group: 'Performance' },
+    maxFPS: { type: 'number', min: 15, max: 120, step: 1, default: 60, description: 'Max render FPS (lower = less main-thread load)', group: 'Performance' },
     noteAmpInfluence: { type: 'number', min: 0, max: 1, step: 0.01, default: 1.0, description: 'Scale note color by amplitude', group: 'Note Response', presets: ['Plasma','MultiNoteScribbles','CymaticsRadialModes','CymaticsNoteModes','CymaticsSpiralNodes','CymaticsDualSource','CymaticsPolarLissajous','FisheyeDistort','BumpySphereAudio','PlotNotesScatter','PlotNotesSmear'] },
     octaveBrightness: { type: 'number', min: 0, max: 1, step: 0.01, default: 0.9, description: 'Brighten color with higher pitch', group: 'Note Response', presets: ['Plasma','MultiNoteScribbles','CymaticsRadialModes','CymaticsNoteModes','CymaticsSpiralNodes','CymaticsDualSource','CymaticsPolarLissajous','FisheyeDistort','BumpySphereAudio','PlotNotesScatter','PlotNotesSmear'] },
     noteThreshold: { type: 'number', min: 0, max: 1, step: 0.01, default: 0.08, description: 'Minimum note amplitude to render blips', group: 'Note Response', presets: ['Plasma','MultiNoteScribbles','CymaticsRadialModes','CymaticsNoteModes','CymaticsSpiralNodes','CymaticsDualSource','CymaticsPolarLissajous','FisheyeDistort','BumpySphereAudio','PlotNotesScatter','PlotNotesSmear'] },
@@ -1077,6 +1889,13 @@ export const ShaderLabModule: VisualizerModule = {
     plasmaScaleY: 1.0,
     plasmaGlow: 0.2,
     plasmaWarp: 0.5,
+    // sanity & performance defaults
+    sanityBrightness: 0.7,
+    sanityTintStrength: 0.5,
+    sanityFloor: 0.08,
+    quality: 1.0,
+    renderScale: 0.85,
+    maxFPS: 60,
   },
   Component: ShaderLabImpl as any,
 };

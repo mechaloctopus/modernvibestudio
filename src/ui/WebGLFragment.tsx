@@ -41,9 +41,11 @@ type Props = {
   fallbackFragmentSource?: string;
   uniforms: Record<string, number | number[] | Float32Array>;
   clearColor?: [number, number, number, number];
+  renderScale?: number; // 0..1, scales canvas resolution for perf
+  maxFPS?: number; // cap rendering to reduce main-thread load
 };
 
-export const WebGLFragment: React.FC<Props> = ({ fragmentSource, fallbackFragmentSource, uniforms, clearColor = [0, 0, 0, 1] }) => {
+export const WebGLFragment: React.FC<Props> = ({ fragmentSource, fallbackFragmentSource, uniforms, clearColor = [0, 0, 0, 1], renderScale = 1, maxFPS = 60 }) => {
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const glRef = React.useRef<WebGLRenderingContext | null>(null);
   const programRef = React.useRef<WebGLProgram | null>(null);
@@ -51,6 +53,10 @@ export const WebGLFragment: React.FC<Props> = ({ fragmentSource, fallbackFragmen
   const uniformLocationsRef = React.useRef<Record<string, WebGLUniformLocation | null>>({});
   const currentFragRef = React.useRef<string>('');
   const vboRef = React.useRef<WebGLBuffer | null>(null);
+  const lastDrawRef = React.useRef<number>(0);
+  const frameIntervalRef = React.useRef<number>(1000 / Math.max(1, Math.min(240, maxFPS)));
+  React.useEffect(() => { frameIntervalRef.current = 1000 / Math.max(1, Math.min(240, maxFPS)); }, [maxFPS]);
+
 
   const vertexSource = React.useMemo(() => `
 attribute vec2 a_pos;
@@ -120,6 +126,9 @@ void main(){
   }, []);
 
   const draw = React.useCallback(() => {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (now - lastDrawRef.current < frameIntervalRef.current) return;
+    lastDrawRef.current = now;
     const canvas = canvasRef.current!;
     const gl = ensureGL();
     gl.viewport(0, 0, canvas.width, canvas.height);
@@ -136,7 +145,9 @@ void main(){
   React.useEffect(() => {
     function resize() {
       const canvas = canvasRef.current!;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const baseDpr = Math.min(window.devicePixelRatio || 1, 2);
+      const scale = Math.max(0.3, Math.min(1, renderScale || 1));
+      const dpr = baseDpr * scale;
       const w = Math.floor(window.innerWidth * dpr);
       const h = Math.floor(window.innerHeight * dpr);
       if (canvas.width !== w || canvas.height !== h) {
@@ -149,7 +160,7 @@ void main(){
     resize();
     window.addEventListener('resize', resize);
     return () => window.removeEventListener('resize', resize);
-  }, [draw]);
+  }, [draw, renderScale]);
 
   // Compile program when fragmentSource changes
   React.useEffect(() => {
@@ -176,6 +187,7 @@ void main(){
           currentFragRef.current = fallbackFragmentSource;
           draw();
         } catch (e2) {
+
           // eslint-disable-next-line no-console
           console.error('Fragment compile failed (including fallback):', e2);
         }
@@ -188,6 +200,14 @@ void main(){
 
   // Redraw on uniform updates
   React.useEffect(() => { draw(); }, [uniforms, draw]);
+
+  // Continuous animation loop (throttled by maxFPS inside draw)
+  React.useEffect(() => {
+    let raf = 0;
+    const loop = () => { draw(); raf = requestAnimationFrame(loop); };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [draw, maxFPS]);
 
   return <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />;
 };
