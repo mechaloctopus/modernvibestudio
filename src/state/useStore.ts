@@ -419,7 +419,8 @@ export const useStore = create<StoreState>((set, get) => {
       normalize: true,
     },
     setAudioMapping: (updates) => set((s) => ({ audioMapping: { ...s.audioMapping, ...updates } })),
-    toneColorMap: Array.from({ length: 12 }, (_, i) => ({ hueDeg: (i/12)*360, brightness: 0.8 })),
+    // ROYGBIV default: 12 chromatic notes span Red (0deg) to Violet (~270deg)
+    toneColorMap: Array.from({ length: 12 }, (_, i) => ({ hueDeg: (i/11)*270, brightness: 0.8 })),
     setToneColorMap: (index, entry) => set((s) => {
       const next = s.toneColorMap.slice();
       const prev = next[index] || { hueDeg: 0, brightness: 0.8 };

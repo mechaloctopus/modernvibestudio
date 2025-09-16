@@ -8,6 +8,7 @@ import { GLSurface } from '../../ui/GLSurface';
 import { hslToRgb } from '../../core/color';
 import type { ParamRoute } from '../../core/types';
 import { WebGLFragment } from '../../ui/WebGLFragment';
+import Registry from './core/registry';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -1515,13 +1516,13 @@ function saveUserDefaults(map: Record<string, any>) {
   } catch {}
 }
 
-function buildShaderSource(userBody: string): string {
-  return `#ifdef GL_ES\nprecision highp float;\nprecision highp int;\n#endif\n\nvarying vec2 uv;\nuniform vec2 u_res;\nuniform float u_time, u_amp, u_centroid, u_note;\nuniform float u_low, u_mid, u_high, u_onset;\nuniform float u_themeB, u_themeS;\nuniform vec4 u_bands0, u_bands1, u_bands2, u_bands3;\nuniform vec4 u_pitchR0, u_pitchR1, u_pitchR2;\nuniform vec4 u_pitchG0, u_pitchG1, u_pitchG2;\nuniform vec4 u_pitchB0, u_pitchB1, u_pitchB2;\nuniform vec4 u_notesA;\nuniform vec4 u_notesAmpA;\nuniform float u_petals;\nuniform float u_ripple;\nuniform float u_speed;\nuniform float u_zoom;\nuniform float u_detail;\nuniform float u_intensity;\nuniform float u_angle;\nuniform float u_hueShift;\nuniform float u_noteAmpInfluence;\nuniform float u_octaveBrightness;\nuniform float u_noteThreshold;\nuniform float u_blipSize;\nuniform float u_plasmaFocus;\nuniform float u_plasmaSwirl;\nuniform float u_plasmaBandLow;\nuniform float u_plasmaBandMid;\nuniform float u_plasmaBandHigh;\nuniform float u_density;\nuniform float u_nodeSharpness;\nuniform float u_bandBalance;\nuniform float u_harmonicFog;\nuniform float u_plasmaToneBlend;\nuniform float u_plasmaNoteDrive;\nuniform float u_plasmaContrast;\nuniform float u_plasmaScaleX;\nuniform float u_plasmaScaleY;\nuniform float u_plasmaGlow;\nuniform float u_plasmaWarp;\nuniform float u_smearWidth;\nuniform float u_dripSpeed;\nuniform float u_smearDecay;\nuniform float u_smearJitter;\nuniform float u_fisheyeStrength;\nuniform float u_shockWidth;\nuniform float u_shockSpeed;\nuniform float u_shockMix;\nuniform float u_bumpAmount;\nuniform float u_light;\nuniform float u_surfaceA;\nuniform float u_surfaceB;\nuniform float u_surfaceMix;\nuniform float u_gridOpacity;\nuniform float u_groupTintMix;\nuniform float u_trailThickness;\nuniform float u_trailLength;\nuniform float u_turnRate;\nuniform float u_zParallax;\nuniform float u_randomness;\nuniform float u_snakeSpeed;\nuniform float u_trailGlow;\nfloat pick4(vec4 v, int i){\n  if(i==0) return v.x;\n  if(i==1) return v.y;\n  if(i==2) return v.z;\n  return v.w;\n}\nfloat band(int i){\n  if(i<4) return pick4(u_bands0, i);\n  else if(i<8) return pick4(u_bands1, i-4);\n  else if(i<12) return pick4(u_bands2, i-8);\n  else return pick4(u_bands3, i-12);\n}\nfloat samplePitch(in vec4 a0,in vec4 a1,in vec4 a2, int i){\n  if(i<4) return pick4(a0, i);\n  else if(i<8) return pick4(a1, i-4);\n  else return pick4(a2, i-8);\n}\nint wrap12(int k){\n  return int(mod(float(k), 12.0));\n}\nvec3 toneColor(int idx){\n  int i = wrap12(idx);\n  float r = samplePitch(u_pitchR0,u_pitchR1,u_pitchR2,i);\n  float g = samplePitch(u_pitchG0,u_pitchG1,u_pitchG2,i);\n  float b = samplePitch(u_pitchB0,u_pitchB1,u_pitchB2,i);\n  vec3 c = vec3(r,g,b);\n  c = mix(vec3(0.0), c, u_themeS);\n  c *= u_themeB;\n  return c;\n}\nvec3 noteColor(float midi){\n  int idx = int(floor(midi+0.5));\n  vec3 nc = toneColor(idx);\n  float bright = clamp((midi - 36.0)/60.0, 0.0, 1.0) * u_octaveBrightness;\n  return mix(nc, vec3(1.0), bright*0.35);\n}\nfloat noteAt(int i){ return pick4(u_notesA, i); }\nfloat noteAmp(int i){ return pick4(u_notesAmpA, i); }
+function buildShaderSource(userBody: string, extraUniformDecl: string = ""): string {
+  return `#ifdef GL_ES\nprecision highp float;\nprecision highp int;\n#endif\n\nvarying vec2 uv;\nuniform vec2 u_res;\nuniform float u_time, u_amp, u_centroid, u_note;\nuniform float u_low, u_mid, u_high, u_onset;\nuniform float u_themeB, u_themeS;\nuniform vec4 u_bands0, u_bands1, u_bands2, u_bands3;\nuniform vec4 u_pitchR0, u_pitchR1, u_pitchR2;\nuniform vec4 u_pitchG0, u_pitchG1, u_pitchG2;\nuniform vec4 u_pitchB0, u_pitchB1, u_pitchB2;\nuniform vec4 u_notesA;\nuniform vec4 u_notesAmpA;\nuniform float u_petals;\nuniform float u_ripple;\nuniform float u_speed;\nuniform float u_zoom;\nuniform float u_detail;\nuniform float u_intensity;\nuniform float u_angle;\nuniform float u_hueShift;\nuniform float u_noteAmpInfluence;\nuniform float u_octaveBrightness;\nuniform float u_noteThreshold;\nuniform float u_blipSize;\nuniform float u_plasmaFocus;\nuniform float u_plasmaSwirl;\nuniform float u_plasmaBandLow;\nuniform float u_plasmaBandMid;\nuniform float u_plasmaBandHigh;\nuniform float u_density;\nuniform float u_nodeSharpness;\nuniform float u_bandBalance;\nuniform float u_harmonicFog;\nuniform float u_plasmaToneBlend;\nuniform float u_plasmaNoteDrive;\nuniform float u_plasmaContrast;\nuniform float u_plasmaScaleX;\nuniform float u_plasmaScaleY;\nuniform float u_plasmaGlow;\nuniform float u_plasmaWarp;\nuniform float u_smearWidth;\nuniform float u_dripSpeed;\nuniform float u_smearDecay;\nuniform float u_smearJitter;\nuniform float u_fisheyeStrength;\nuniform float u_shockWidth;\nuniform float u_shockSpeed;\nuniform float u_shockMix;\nuniform float u_bumpAmount;\nuniform float u_light;\nuniform float u_surfaceA;\nuniform float u_surfaceB;\nuniform float u_surfaceMix;\nuniform float u_gridOpacity;\nuniform float u_groupTintMix;\nuniform float u_trailThickness;\nuniform float u_trailLength;\nuniform float u_turnRate;\nuniform float u_zParallax;\nuniform float u_randomness;\nuniform float u_snakeSpeed;\nuniform float u_trailGlow;\nuniform float u_quality;\nfloat pick4(vec4 v, int i){\n  if(i==0) return v.x;\n  if(i==1) return v.y;\n  if(i==2) return v.z;\n  return v.w;\n}\nfloat band(int i){\n  if(i<4) return pick4(u_bands0, i);\n  else if(i<8) return pick4(u_bands1, i-4);\n  else if(i<12) return pick4(u_bands2, i-8);\n  else return pick4(u_bands3, i-12);\n}\nfloat samplePitch(in vec4 a0,in vec4 a1,in vec4 a2, int i){\n  if(i<4) return pick4(a0, i);\n  else if(i<8) return pick4(a1, i-4);\n  else return pick4(a2, i-8);\n}\nint wrap12(int k){\n  return int(mod(float(k), 12.0));\n}\nvec3 toneColor(int idx){\n  int i = wrap12(idx);\n  float r = samplePitch(u_pitchR0,u_pitchR1,u_pitchR2,i);\n  float g = samplePitch(u_pitchG0,u_pitchG1,u_pitchG2,i);\n  float b = samplePitch(u_pitchB0,u_pitchB1,u_pitchB2,i);\n  vec3 c = vec3(r,g,b);\n  c = mix(vec3(0.0), c, u_themeS);\n  c *= u_themeB;\n  return c;\n}\nvec3 noteColor(float midi){\n  int idx = int(floor(midi+0.5));\n  vec3 nc = toneColor(idx);\n  float bright = clamp((midi - 36.0)/60.0, 0.0, 1.0) * u_octaveBrightness;\n  return mix(nc, vec3(1.0), bright*0.35);\n}\nfloat noteAt(int i){ return pick4(u_notesA, i); }\nfloat noteAmp(int i){ return pick4(u_notesAmpA, i); }
 // Sanity uniforms
 uniform float u_sanityBrightness;
 uniform float u_sanityTintStrength;
-uniform float u_sanityFloor;\n\n// Shared helpers available to all presets (global scope)\nmat2 r2(float a){ float c=cos(a), s=sin(a); return mat2(c,-s,s,c); }\nmat2 Rm(float a){ return r2(a); }\nfloat hash12(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }\nfloat noise(vec2 p){ vec2 i=floor(p), f=fract(p); float a=hash12(i), b=hash12(i+vec2(1.0,0.0)); float c=hash12(i+vec2(0.0,1.0)), d=hash12(i+vec2(1.0,1.0)); vec2 u=f*f*(3.0-2.0*f); return mix(mix(a,b,u.x), mix(c,d,u.x), u.y); }\nfloat noise2(vec2 p){ return noise(p); }\nfloat fbm(vec2 p){ float v=0.0; float a=0.5; mat2 m=r2(0.5); for(int i=0;i<4;i++){ v+=a*noise(p); p=m*p*2.0; a*=0.5; } return v; }\nvec3 palette(float d, vec3 tc){ return mix(vec3(0.2,0.7,0.9), tc, clamp(d,0.0,1.0)); }\nfloat mapF(vec3 p, float t){ for (int i=0;i<8;i++){ p.xz = r2(t) * p.xz; p.xy = r2(t*1.89) * p.xy; p.xz = abs(p.xz); p.xz -= 0.5; } return dot(sign(p), p)/5.0; }\nvec4 rmPyr(vec3 ro, vec3 rd, float t, vec3 tc){ float tt=0.0; vec3 col=vec3(0.0); float d=1.0; for(int i=0;i<64;i++){ vec3 p=ro+rd*tt; d = mapF(p, t)*0.5; if (d<0.02) break; if (d>100.0) break; col += palette(length(p)*0.1, tc) / (400.0 * max(d, 1e-3)); tt += d; } return vec4(col, 1.0/(d*100.0)); }\n\nvoid main(){\n  vec3 col = vec3(0.0);\n  vec2 p = uv;\n  ${userBody}\n  vec3 outc = max(col, vec3(u_sanityFloor)) * (0.5 + 0.5*u_sanityBrightness);
-  gl_FragColor = vec4(clamp(outc,0.0,1.0), 1.0);\n}`;
+uniform float u_sanityFloor;\n\n${extraUniformDecl}\n// Shared helpers available to all presets (global scope)\nmat2 r2(float a){ float c=cos(a), s=sin(a); return mat2(c,-s,s,c); }\nmat2 Rm(float a){ return r2(a); }\nfloat hash12(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }\nfloat noise(vec2 p){ vec2 i=floor(p), f=fract(p); float a=hash12(i), b=hash12(i+vec2(1.0,0.0)); float c=hash12(i+vec2(0.0,1.0)), d=hash12(i+vec2(1.0,1.0)); vec2 u=f*f*(3.0-2.0*f); return mix(mix(a,b,u.x), mix(c,d,u.x), u.y); }\nfloat noise2(vec2 p){ return noise(p); }\nfloat fbm(vec2 p){ float v=0.0; float a=0.5; mat2 m=r2(0.5); for(int i=0;i<4;i++){ v+=a*noise(p); p=m*p*2.0; a*=0.5; } return v; }\nvec3 palette(float d, vec3 tc){ return mix(vec3(0.2,0.7,0.9), tc, clamp(d,0.0,1.0)); }\nfloat mapF(vec3 p, float t){ for (int i=0;i<8;i++){ p.xz = r2(t) * p.xz; p.xy = r2(t*1.89) * p.xy; p.xz = abs(p.xz); p.xz -= 0.5; } return dot(sign(p), p)/5.0; }\nvec4 rmPyr(vec3 ro, vec3 rd, float t, vec3 tc){ float tt=0.0; vec3 col=vec3(0.0); float d=1.0; for(int i=0;i<64;i++){ vec3 p=ro+rd*tt; d = mapF(p, t)*0.5; if (d<0.02) break; if (d>100.0) break; col += palette(length(p)*0.1, tc) / (400.0 * max(d, 1e-3)); tt += d; } return vec4(col, 1.0/(d*100.0)); }\n\nvoid main(){\n  vec3 col = vec3(0.0);\n  vec2 p = uv;\n  ${userBody}\n  vec3 finalCol = max(col, vec3(u_sanityFloor)) * (0.5 + 0.5*u_sanityBrightness);
+  gl_FragColor = vec4(clamp(finalCol,0.0,1.0), 1.0);\n}`;
 }
 
 // Minimal safe fallback shader if user/preset compilation fails
@@ -1535,15 +1536,32 @@ col = base * vign;
 const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | null }>= ({ params, frame }) => {
   const [time, setTime] = React.useState(0);
   const start = React.useRef<number | null>(null);
+  // Smoothed pitch-class vectors for graceful color flow (primary and secondary)
+  const pcVec = React.useRef<{x:number,y:number}>({ x: 1, y: 0 });
+  const pc2Vec = React.useRef<{x:number,y:number}>({ x: 1, y: 0 });
+  const pc2WeightRef = React.useRef<number>(0);
+  const framesRef = React.useRef<number>(0);
+  const [fps, setFps] = React.useState(0);
+
   React.useEffect(() => {
     let raf: number;
     const loop = (t: number) => {
       if (start.current == null) start.current = t;
       setTime((t - start.current) / 1000);
+      framesRef.current++;
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
+  }, []);
+
+  React.useEffect(() => {
+    const id = setInterval(() => {
+      setFps((prev) => {
+        const f = framesRef.current; framesRef.current = 0; return f * 2; // approx fps per 0.5s window
+      });
+    }, 500);
+    return () => clearInterval(id);
   }, []);
 
   const storeState = require('../../state/useStore').useStore.getState();
@@ -1578,6 +1596,48 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
   }, [storeState.toneColorMap, storeState.toneColorSaturation]);
   const notesA = frame?.notesMidi || new Float32Array(0);
   const notesAmpA = frame?.notesAmp || new Float32Array(0);
+  // Compute smoothed pitch classes (primary/secondary) from notes
+  const noteThresh = Math.max(0, Math.min(1, ((params as any).noteThreshold ?? 0.08)));
+  const alpha = Math.max(0.01, Math.min(1.0, ((params as any).toneSmoothness ?? 0.22))); // smoothing factor; higher = faster changes
+  const toAngle = (pc: number) => (pc/12) * Math.PI * 2;
+  const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+  const norm = (x: number, y: number) => { const m = Math.hypot(x, y) || 1; return { x: x/m, y: y/m }; };
+  const candidates: Array<{pc:number, amp:number}> = [];
+  for (let i = 0; i < 4; i++) {
+    const mn = notesA[i] ?? -1;
+    const amp = notesAmpA[i] ?? 0;
+    if (mn >= 0 && amp > noteThresh) {
+      let pc = mn % 12; if (pc < 0) pc += 12;
+      candidates.push({ pc, amp });
+    }
+  }
+  if (candidates.length === 0 && (frame?.midiNote ?? -1) >= 0) {
+    let pc = (frame!.midiNote! % 12); if (pc < 0) pc += 12;
+    candidates.push({ pc, amp: 1 });
+  }
+  candidates.sort((a,b) => b.amp - a.amp);
+  const primary = candidates[0];
+  const secondary = candidates[1];
+  if (primary) {
+    const ang = toAngle(primary.pc);
+    const tx = Math.cos(ang), ty = Math.sin(ang);
+    const nx = lerp(pcVec.current.x, tx, alpha);
+    const ny = lerp(pcVec.current.y, ty, alpha);
+    pcVec.current = norm(nx, ny);
+  }
+  if (secondary) {
+    const ang2 = toAngle(secondary.pc);
+    const tx2 = Math.cos(ang2), ty2 = Math.sin(ang2);
+    const nx2 = lerp(pc2Vec.current.x, tx2, alpha);
+    const ny2 = lerp(pc2Vec.current.y, ty2, alpha);
+    pc2Vec.current = norm(nx2, ny2);
+    pc2WeightRef.current = lerp(pc2WeightRef.current, Math.max(0, Math.min(1, secondary.amp)), 0.1);
+  } else {
+    pc2WeightRef.current = lerp(pc2WeightRef.current, 0, 0.1);
+  }
+  const pcSmooth = ((Math.atan2(pcVec.current.y, pcVec.current.x) + Math.PI*2) % (Math.PI*2)) * (12/(Math.PI*2));
+  const pc2Smooth = ((Math.atan2(pc2Vec.current.y, pc2Vec.current.x) + Math.PI*2) % (Math.PI*2)) * (12/(Math.PI*2));
+
   const uniforms: any = {
     u_res: [SCREEN_W, SCREEN_H],
     u_time: time,
@@ -1605,6 +1665,10 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
     u_pitchB0: vec(pitchB[0]||0, pitchB[1]||0, pitchB[2]||0, pitchB[3]||0),
     u_pitchB1: vec(pitchB[4]||0, pitchB[5]||0, pitchB[6]||0, pitchB[7]||0),
     u_pitchB2: vec(pitchB[8]||0, pitchB[9]||0, pitchB[10]||0, pitchB[11]||0),
+    // Smoothed pitch class uniforms for graceful tone color mapping
+    u_pcSmooth: pcSmooth,
+    u_pc2Smooth: pc2Smooth,
+    u_pc2Weight: pc2WeightRef.current,
     u_petals: Math.max(3, Math.floor(((params as any).petals ?? 8))),
     u_ripple: Math.max(0, Math.min(1, ((params as any).ripple ?? 0.3))),
     u_speed: Math.max(0, Math.min(3, ((params as any).speed ?? 1.0))),
@@ -1663,10 +1727,42 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
     u_quality: Math.max(0.3, Math.min(1.0, ((params as any).quality ?? 1.0))),
   };
 
+  // Modular preset feature flag and assembly (Phase 1)
+  let activeUserBody: string = (params as any).fragment || DEFAULT_FRAGMENT;
+  let activeExtraDecl: string = "\nuniform float u_pcSmooth;\nuniform float u_pc2Smooth;\nuniform float u_pc2Weight;";
+  const modularMode = !!(params as any).modularMode;
+  let currentPresetId: string | undefined = undefined;
+  let currentPreset: any = null;
+  if (modularMode) {
+    const presetId: string = (params as any).modularPresetId || (Registry.firstId() || 'Gridbreak');
+    currentPresetId = presetId;
+    const pm = Registry.byId(presetId);
+    currentPreset = pm;
+    if (pm) {
+      try {
+        const override = (params as any).modularFragmentOverride as string | undefined;
+        if (override && override.length > 0) {
+          activeUserBody = override;
+        } else {
+          activeUserBody = pm.buildFragment({});
+        }
+      } catch {}
+      // Add per-preset uniforms and values
+      const schema: any = pm.schema || {};
+      Object.keys(schema).forEach((k) => {
+        activeExtraDecl += `\nuniform float u_pm_${k};`;
+        const paramKey = `pm_${pm.id}_${k}`;
+        const defv = typeof schema[k]?.default === 'number' ? schema[k].default : 0.0;
+        const val = (params as any)[paramKey] ?? defv;
+        uniforms[`u_pm_${k}`] = val;
+      });
+    }
+  }
+
   const [shader, setShader] = React.useState<any>(() => {
     if (Platform.OS === 'web') return null; // avoid gl-react on web (React 19 legacy context)
     try {
-      return Shaders.create({ user: { frag: GLSL`${buildShaderSource(params.fragment || DEFAULT_FRAGMENT)}` } });
+      return Shaders.create({ user: { frag: GLSL`${buildShaderSource(activeUserBody, activeExtraDecl)}` } });
     } catch (e) {
       try {
         return Shaders.create({ user: { frag: GLSL`${buildShaderSource(SAFE_FALLBACK_SOURCE)}` } });
@@ -1675,12 +1771,13 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
     }
   });
   const [shaderWarning, setShaderWarning] = React.useState<string | null>(null);
+  const [webCompileError, setWebCompileError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (Platform.OS === 'web') return; // skip gl-react updates on web
-    const userSource = params.fragment || DEFAULT_FRAGMENT;
+    const userSource = activeUserBody;
     try {
-      const s = Shaders.create({ user: { frag: GLSL`${buildShaderSource(userSource)}` } });
+      const s = Shaders.create({ user: { frag: GLSL`${buildShaderSource(userSource, activeExtraDecl)}` } });
       setShader(s);
       setShaderWarning(null);
       return;
@@ -1692,7 +1789,10 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
         return;
       } catch {}
     }
-  }, [params.fragment]);
+  }, [params.fragment, (params as any).modularMode, (params as any).modularPresetId]);
+  const [dashOpen, setDashOpen] = React.useState(false);
+  React.useEffect(()=>{ try { const v = window.localStorage.getItem('mvs:shaderlab:dashOpen'); if (v) setDashOpen(v==='1'); } catch {} },[]);
+
 
   // Build and apply routing presets when a ShaderLab preset is selected
   const applyRoutingPreset = React.useCallback((presetKey: string) => {
@@ -1759,14 +1859,18 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
         <Text style={{ color: 'white' }}>Shader compile error. Showing fallback.</Text>
       </View>
     );
+
   }
+
 
   // Provide u_res to WebGLFragment to match viewport size dynamically
   let effectiveScale = 1.0;
   let effectiveFPS = 60;
+  let isFullscreen = false;
   if (Platform.OS === 'web') {
     // Performance: adjust render scale / fps if UI overlays are open
     const uiState = require('../../state/useStore').useStore.getState();
+    isFullscreen = !!uiState.fullscreen;
     const uiActive = !!(uiState.showMenu || uiState.showLibrary || uiState.showInspector || uiState.showPanelsMenu || uiState.showRoutingPanel || uiState.showUniforms);
     const baseScale = Math.max(0.3, Math.min(1.0, ((params as any).renderScale ?? 0.85)));
     effectiveScale = uiActive ? baseScale * 0.6 : baseScale;
@@ -1779,17 +1883,203 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
     <View style={{ position: 'absolute', inset: 0 }}>
       {Platform.OS === 'web' ? (
         <WebGLFragment
-          fragmentSource={buildShaderSource(params.fragment || DEFAULT_FRAGMENT)}
+          fragmentSource={buildShaderSource(activeUserBody, activeExtraDecl)}
           fallbackFragmentSource={buildShaderSource(SAFE_FALLBACK_SOURCE)}
           uniforms={uniforms}
           renderScale={effectiveScale}
           maxFPS={effectiveFPS}
+          onCompileError={(e:any)=>{ try{ setWebCompileError(String(e?.message||e)); } catch{} }}
+          onFallbackUsed={(e:any)=>{ try{ setWebCompileError('Fell back to safe shader due to error: ' + String(e?.message||e)); } catch{} }}
         />
       ) : (
         <GLSurface>
           <Node shader={shader.user} uniforms={uniforms} />
         </GLSurface>
       )}
+      {/* Modular preset controls & discoverability (pilot) */}
+      {Platform.OS === 'web' && !modularMode && !isFullscreen ? (
+        <div style={{ position: 'absolute', left: 12, top: 12 }}>
+          <button
+            onClick={() => { try { require('../../state/useStore').useStore.getState().setParam('modularMode', true); } catch {} }}
+            style={{ padding: '6px 10px', background: 'rgba(0,0,0,0.5)', color: 'white', border: '1px solid #333', borderRadius: 8, cursor: 'pointer' }}
+            title="Enable the new modular preset system (pilot)"
+          >
+            Enable Modular Presets
+          </button>
+        </div>
+      ) : null}
+
+      {modularMode && !isFullscreen ? (
+        <View style={{ position: 'absolute', left: 12, top: 12, width: 300 }}>
+          <View style={{ backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, padding: 8, borderWidth: 1, borderColor: '#222' }}>
+            <Text style={{ color: 'white', fontWeight: 'bold', marginBottom: 6 }}>Preset Controls</Text>
+            {Platform.OS === 'web' ? (
+              <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ color: 'white' }}>Preset:</label>
+                <select
+                  value={currentPresetId || ''}
+                  onChange={(e: any) => {
+                    try {
+                      const st = require('../../state/useStore').useStore.getState();
+                      st.setParam('modularPresetId', e.target.value);
+                      st.setParam('modularFragmentOverride', ''); // show the selected preset's default fragment
+                    } catch {}
+                  }}
+                >
+                  {Registry.all().map((p) => (
+                    <option key={p.id} value={p.id}>{p.id}</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <Text style={{ color: 'white', marginBottom: 8 }}>Preset: {currentPresetId || ''}</Text>
+            )}
+            {/* Per-preset knobs */}
+            {currentPreset && (currentPreset as any).schema ? (
+              Object.keys((currentPreset as any).schema).map((k) => {
+                const meta: any = (currentPreset as any).schema[k];
+                const paramKey = `pm_${(currentPreset as any).id}_${k}`;
+                const value = (params as any)[paramKey] ?? meta.default;
+                return (
+                  <View key={k} style={{ marginBottom: 8 }}>
+                    <Text style={{ color: 'white' }}>{k}: {typeof value === 'number' ? value.toFixed(2) : String(value)}</Text>
+                    {Platform.OS === 'web' ? (
+                      <input
+                        type="range"
+                        min={meta.min}
+                        max={meta.max}
+                        step={meta.step ?? 0.01}
+                        value={value}
+                        onChange={(e: any) => {
+                          try { require('../../state/useStore').useStore.getState().setParam(paramKey, parseFloat(e.target.value)); } catch {}
+                        }}
+                        style={{ width: '100%' }}
+                      />
+                    ) : null}
+                  </View>
+                );
+              })
+            ) : null}
+          </View>
+        </View>
+      ) : null}
+
+      {/* Modular fragment editor (web only) */}
+      {modularMode && Platform.OS === 'web' && !isFullscreen ? (
+        <div style={{ position: 'absolute', left: 12, top: 12 + 220, width: 520 }}>
+          <div style={{ background: 'rgba(0,0,0,0.55)', borderRadius: 12, padding: 8, border: '1px solid #222' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ color: 'white', fontWeight: 'bold' }}>GLSL Fragment (live)</span>
+                {webCompileError ? (
+                  <span style={{ color: '#ff6b6b', fontSize: 12 }}>Shader error: {webCompileError}</span>
+                ) : null}
+              </div>
+              <button
+                onClick={() => { try { require('../../state/useStore').useStore.getState().setParam('modularFragmentOverride', ''); setWebCompileError(null); } catch {} }}
+                style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.08)', color: 'white', border: '1px solid #444', borderRadius: 6, cursor: 'pointer' }}
+                title="Reset to preset source"
+              >Reset</button>
+            </div>
+            <textarea
+              spellCheck={false}
+              style={{ width: '100%', height: 260, fontFamily: 'monospace', fontSize: 12, color: '#ddd', background: 'rgba(0,0,0,0.6)', border: '1px solid #333', borderRadius: 8, padding: 8 }}
+              value={(((params as any).modularFragmentOverride as string) && ((params as any).modularFragmentOverride as string).length > 0) ? (params as any).modularFragmentOverride : activeUserBody}
+              onChange={(e: any) => { try { require('../../state/useStore').useStore.getState().setParam('modularFragmentOverride', e.target.value); } catch {} }}
+            />
+          </div>
+        </div>
+      ) : null}
+      {Platform.OS === 'web' && !isFullscreen ? (
+        <div style={{ position: 'absolute', right: 12, top: 12 }}>
+          <button
+            onClick={() => { try { const nv = !dashOpen; setDashOpen(nv); window.localStorage.setItem('mvs:shaderlab:dashOpen', nv ? '1' : '0'); } catch {} }}
+            style={{ padding: '6px 10px', background: 'rgba(0,0,0,0.5)', color: 'white', border: '1px solid #333', borderRadius: 8, cursor: 'pointer' }}
+            title="Toggle Audio Dashboard"
+          >{dashOpen ? 'Hide' : 'Show'} Audio Dashboard</button>
+        </div>
+      ) : null}
+
+      {Platform.OS === 'web' && dashOpen && !isFullscreen ? (
+        <div style={{ position: 'absolute', right: 12, top: 52, width: 380, maxHeight: 520, overflow: 'auto', background: 'rgba(0,0,0,0.6)', border: '1px solid #222', borderRadius: 12, padding: 10 }}>
+          <div style={{ color: 'white', fontWeight: 'bold', marginBottom: 6 }}>Audio Dashboard</div>
+          <div style={{ color: '#ddd', fontSize: 12, lineHeight: 1.4, display: 'grid', gap: 8 }}>
+            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Raw Audio</div>
+            <div>RMS: {(frame?.amplitudeRms ?? 0).toFixed(3)} | Centroid: {(frame?.spectralCentroidHz ?? 0).toFixed(1)} Hz | ZCR: {(frame?.zeroCrossingRate ?? 0).toFixed(3)}</div>
+            <div>Rolloff: {(frame?.spectralRolloffHz ?? 0).toFixed(1)} Hz | Flatness: {(frame?.spectralFlatness ?? 0).toFixed(3)} | SR: {(frame?.sampleRateHz ?? 0)}</div>
+            <div>Dominant Freq: {(frame?.dominantFreqHz ?? 0).toFixed(1)} Hz</div>
+            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Frequency Bands (0..15)</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4 }}>
+              {[b0,b1,b2,b3,b4,b5,b6,b7,b8,b9,b10,b11,b12,b13,b14,b15].map((v, i) => (
+                <div key={i} style={{ background: 'rgba(255,255,255,0.05)', padding: 2, borderRadius: 4 }}>
+                  <div>B{i}: {v.toFixed(2)}</div>
+                  <div style={{ height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3 }}>
+                    <div style={{ width: `${Math.max(0, Math.min(1, v))*100}%`, height: '100%', background: '#6cf', borderRadius: 3 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Note Detection (top 4)</div>
+            <div>
+              {[0,1,2,3].map((i)=>{
+                const m = notesA[i] ?? -1; const a = notesAmpA[i] ?? 0;
+                return <div key={i}>i{i}: midi={m.toFixed(1)}, amp={a.toFixed(2)}</div>;
+              })}
+            </div>
+            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Pitch Analysis</div>
+            <div>u_pcSmooth: {(uniforms as any).u_pcSmooth?.toFixed ? (uniforms as any).u_pcSmooth.toFixed(2) : String((uniforms as any).u_pcSmooth)} | u_pc2Smooth: {(uniforms as any).u_pc2Smooth?.toFixed ? (uniforms as any).u_pc2Smooth.toFixed(2) : String((uniforms as any).u_pc2Smooth)} | u_pc2Weight: {(uniforms as any).u_pc2Weight?.toFixed ? (uniforms as any).u_pc2Weight.toFixed(2) : String((uniforms as any).u_pc2Weight)}</div>
+            <div>Chroma12: {Array.from(frame?.chroma12 || []).map((v: number, idx: number) => `${idx}:${v.toFixed(2)}`).join(' ') || 'n/a'}</div>
+            <div>Key: {frame?.keyIndex != null ? frame.keyIndex : 'n/a'} {frame?.keyIsMajor ? 'Major' : (frame?.keyIsMajor===false ? 'Minor' : '')} | conf: {(frame?.keyConfidence ?? 0).toFixed(2)}</div>
+            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Audio Features</div>
+            <div>Low: {low.toFixed(2)} | Mid: {mid.toFixed(2)} | High: {high.toFixed(2)} | Onset: {onset}</div>
+            <div>Onset rate: {(frame?.onsetRatePerSec ?? 0).toFixed(2)} /s</div>
+            <div style={{ fontWeight: 'bold', color: '#9cf' }}>MIDI</div>
+            <div>Current Note: {(frame?.midiNote ?? -1).toFixed(1)} | Velocity: n/a | Channel: n/a</div>
+            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Tone Mapping</div>
+            <div>themeB: {(storeState.themeBrightness ?? 1).toFixed(2)} | themeS: {(storeState.themeSaturation ?? 1).toFixed(2)}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: 2 }}>
+              {Array.from({length:12}).map((_,i)=>{
+                const r = (pitchR?.[i] ?? 0);
+                const g = (pitchG?.[i] ?? 0);
+                const b = (pitchB?.[i] ?? 0);
+                const rgb = `rgb(${Math.round(r*255)},${Math.round(g*255)},${Math.round(b*255)})`;
+                return <div key={i} title={`PC ${i}`} style={{ height: 10, background: rgb, borderRadius: 2 }} />;
+              })}
+            </div>
+            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Octave Analysis</div>
+            {(() => {
+              try {
+                const bins = new Array(10).fill(0);
+                [0,1,2,3].forEach((i)=>{ const m = notesA[i] ?? -1; const a = notesAmpA[i] ?? 0; if (m>=0) { const oc = Math.max(0, Math.min(9, Math.floor(m/12))); bins[oc] += a; }});
+                return <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4 }}>
+                  {bins.map((v,i)=> (
+                    <div key={i} style={{ background: 'rgba(255,255,255,0.05)', padding: 2, borderRadius: 4 }}>
+                      <div>Oc{i}: {v.toFixed(2)}</div>
+                      <div style={{ height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3 }}>
+                        <div style={{ width: `${Math.max(0, Math.min(1, v))*100}%`, height: '100%', background: '#fc6', borderRadius: 3 }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>;
+              } catch {
+                return <div>n/a</div>;
+              }
+            })()}
+            <div style={{ fontWeight: 'bold', color: '#9cf' }}>System Status</div>
+            <div>FPS: {fps.toFixed(0)} | Render scale: {effectiveScale.toFixed(2)} | Max FPS: {effectiveFPS}</div>
+            <div>Quality (u_quality): {((uniforms as any).u_quality ?? 1.0).toFixed(2)} | Buffer: n/a | Latency: n/a</div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+              <button onClick={() => { try { const snap = { time, frame, bands: [b0,b1,b2,b3,b4,b5,b6,b7,b8,b9,b10,b11,b12,b13,b14,b15], notes: Array.from(notesA||[]).slice(0,4), amps: Array.from(notesAmpA||[]).slice(0,4), uniforms }; navigator.clipboard?.writeText(JSON.stringify(snap, null, 2)); } catch {} }} style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.08)', color: 'white', border: '1px solid #444', borderRadius: 6, cursor: 'pointer' }}>Copy Snapshot</button>
+              <button onClick={() => { try { require('../../state/useStore').useStore.getState().setParam('noteThreshold', 0.08); require('../../state/useStore').useStore.getState().setParam('toneSmoothness', 0.22); } catch {} }} style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.08)', color: 'white', border: '1px solid #444', borderRadius: 6, cursor: 'pointer' }}>Reset</button>
+            </div>
+            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Controls</div>
+            <div>Note Threshold: <input type="range" min={0} max={1} step={0.01} defaultValue={(params as any).noteThreshold ?? 0.08} onChange={(e:any)=>{ try { require('../../state/useStore').useStore.getState().setParam('noteThreshold', parseFloat(e.target.value)); } catch {} }} /> <span>{((params as any).noteThreshold ?? 0.08).toFixed(2)}</span></div>
+            <div>Tone Smoothness: <input type="range" min={0.01} max={1} step={0.01} defaultValue={(params as any).toneSmoothness ?? 0.22} onChange={(e:any)=>{ try { require('../../state/useStore').useStore.getState().setParam('toneSmoothness', parseFloat(e.target.value)); } catch {} }} /> <span>{((params as any).toneSmoothness ?? 0.22).toFixed(2)}</span></div>
+          </div>
+        </div>
+      ) : null}
+
+
     </View>
   );
 };
@@ -1798,6 +2088,10 @@ export const ShaderLabModule: VisualizerModule = {
   id: 'shaderlab',
   name: 'ShaderLab',
   schema: {
+    // Feature flag for modular presets (Phase 1)
+    modularMode: { type: 'boolean' as any, default: false, description: 'Enable modular preset loader (pilot)', group: 'Modular' },
+    modularPresetId: { type: 'select', options: Registry.all().map(p=>p.id), default: (Registry.firstId?.() ?? 'Gridbreak'), description: 'Modular preset ID (pilot: Gridbreak, Squid, MountainFogBeach)', group: 'Modular' },
+    modularFragmentOverride: { type: 'string', default: '', description: 'Override current modular preset fragment (live-edit)', multiline: true, group: 'Modular' },
     fragment: { type: 'string', default: DEFAULT_FRAGMENT, description: 'GLSL fragment code body; set vec3 col', multiline: true },
     // Sanity knobs (global to ShaderLab presets)
     sanityBrightness: { type: 'number', min: 0, max: 2, step: 0.01, default: 0.7, description: 'Global brightness multiplier for safety', group: 'Sanity' },
@@ -1810,6 +2104,7 @@ export const ShaderLabModule: VisualizerModule = {
     noteAmpInfluence: { type: 'number', min: 0, max: 1, step: 0.01, default: 1.0, description: 'Scale note color by amplitude', group: 'Note Response', presets: ['Plasma','MultiNoteScribbles','CymaticsRadialModes','CymaticsNoteModes','CymaticsSpiralNodes','CymaticsDualSource','CymaticsPolarLissajous','FisheyeDistort','BumpySphereAudio','PlotNotesScatter','PlotNotesSmear'] },
     octaveBrightness: { type: 'number', min: 0, max: 1, step: 0.01, default: 0.9, description: 'Brighten color with higher pitch', group: 'Note Response', presets: ['Plasma','MultiNoteScribbles','CymaticsRadialModes','CymaticsNoteModes','CymaticsSpiralNodes','CymaticsDualSource','CymaticsPolarLissajous','FisheyeDistort','BumpySphereAudio','PlotNotesScatter','PlotNotesSmear'] },
     noteThreshold: { type: 'number', min: 0, max: 1, step: 0.01, default: 0.08, description: 'Minimum note amplitude to render blips', group: 'Note Response', presets: ['Plasma','MultiNoteScribbles','CymaticsRadialModes','CymaticsNoteModes','CymaticsSpiralNodes','CymaticsDualSource','CymaticsPolarLissajous','FisheyeDistort','BumpySphereAudio','PlotNotesScatter','PlotNotesSmear'] },
+    toneSmoothness: { type: 'number', min: 0.01, max: 1, step: 0.01, default: 0.22, description: 'Smoothing for smoothed pitch-class color (lower = slower, smoother)', group: 'Note Response' },
     blipSize: { type: 'number', min: 0, max: 1, step: 0.01, default: 0.2, description: 'Blip size for note-driven shapes', group: 'Note Response', presets: ['Plasma','MultiNoteScribbles','PlotNotesScatter','PlotNotesSmear'] },
     petals: { type: 'number', min: 3, max: 24, step: 1, default: 8, description: 'Petal count (Mandala variants)', presets: ['MultiNoteScribbles'], group: 'Geometry' },
     ripple: { type: 'number', min: 0, max: 1, step: 0.01, default: 0.25, description: 'Ripple amount', presets: ['MultiNoteScribbles'], group: 'Geometry' },
@@ -1840,6 +2135,7 @@ export const ShaderLabModule: VisualizerModule = {
     plasmaScaleY: { type: 'number', min: 0.5, max: 2, step: 0.01, default: 1.0, description: 'Y scale', presets: ['Plasma'], group: 'Plasma' },
     plasmaGlow: { type: 'number', min: 0, max: 1, step: 0.01, default: 0.2, description: 'Extra glow', presets: ['Plasma'], group: 'Plasma' },
     plasmaWarp: { type: 'number', min: 0, max: 1, step: 0.01, default: 0.5, description: 'Field warp amount', presets: ['Plasma'], group: 'Plasma' },
+
     shockWidth: { type: 'number', min: 0.01, max: 0.5, step: 0.005, default: 0.12, description: 'Shockwave ring width', group: 'Shockwave', presets: [] },
     shockSpeed: { type: 'number', min: 0, max: 2, step: 0.01, default: 0.6, description: 'Shockwave expansion speed', group: 'Shockwave', presets: [] },
     shockMix: { type: 'number', min: 0, max: 1, step: 0.01, default: 0.5, description: 'Mix notes into shockwave', group: 'Shockwave', presets: [] },
@@ -1859,11 +2155,15 @@ export const ShaderLabModule: VisualizerModule = {
     trailGlow: { type: 'number', min: 0, max: 1, step: 0.01, default: 0.5, description: 'Trail glow multiplier', group: 'Snakes', presets: ['AudioSnakes3D'] },
   },
   defaultParams: {
+    modularMode: false,
+    modularPresetId: 'Gridbreak',
+    modularFragmentOverride: '',
     fragment: DEFAULT_FRAGMENT,
     // preset removed from UI; fragment only
     noteAmpInfluence: 1.0,
     octaveBrightness: 0.9,
     noteThreshold: 0.08,
+    toneSmoothness: 0.22,
     blipSize: 0.2,
     petals: 8,
     ripple: 0.25,

@@ -43,9 +43,11 @@ type Props = {
   clearColor?: [number, number, number, number];
   renderScale?: number; // 0..1, scales canvas resolution for perf
   maxFPS?: number; // cap rendering to reduce main-thread load
+  onCompileError?: (error: any) => void;
+  onFallbackUsed?: (error: any) => void;
 };
 
-export const WebGLFragment: React.FC<Props> = ({ fragmentSource, fallbackFragmentSource, uniforms, clearColor = [0, 0, 0, 1], renderScale = 1, maxFPS = 60 }) => {
+export const WebGLFragment: React.FC<Props> = ({ fragmentSource, fallbackFragmentSource, uniforms, clearColor = [0, 0, 0, 1], renderScale = 1, maxFPS = 60, onCompileError, onFallbackUsed }) => {
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const glRef = React.useRef<WebGLRenderingContext | null>(null);
   const programRef = React.useRef<WebGLProgram | null>(null);
@@ -180,14 +182,16 @@ void main(){
       currentFragRef.current = fragmentSource;
       draw();
     } catch (e) {
+      onCompileError?.(e);
       if (fallbackFragmentSource) {
         try {
           const prog = compileAndLink(gl, fallbackFragmentSource);
           programRef.current = prog;
           currentFragRef.current = fallbackFragmentSource;
+          onFallbackUsed?.(e);
           draw();
         } catch (e2) {
-
+          onCompileError?.(e2);
           // eslint-disable-next-line no-console
           console.error('Fragment compile failed (including fallback):', e2);
         }
@@ -196,7 +200,7 @@ void main(){
         console.error('Fragment compile failed:', e);
       }
     }
-  }, [compileAndLink, draw, ensureGL, fallbackFragmentSource, fragmentSource]);
+  }, [compileAndLink, draw, ensureGL, fallbackFragmentSource, fragmentSource, onCompileError, onFallbackUsed]);
 
   // Redraw on uniform updates
   React.useEffect(() => { draw(); }, [uniforms, draw]);

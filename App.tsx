@@ -75,6 +75,29 @@ export default function App() {
   const Visual = current.Component;
   const mappedBands = React.useMemo(() => applySpectrumMapping(frame?.spectrum, frame?.sampleRateHz, audioMapping), [frame?.spectrum, frame?.sampleRateHz, audioMapping]);
   useKeyboardShortcuts();
+
+  // True browser fullscreen when toggled
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const doc: any = document;
+    const elem: any = document.documentElement;
+    const isFs = !!doc.fullscreenElement || !!(doc as any).webkitFullscreenElement;
+    const requestFs = () => (elem.requestFullscreen ? elem.requestFullscreen() : (elem as any).webkitRequestFullscreen?.());
+    const exitFs = () => (doc.exitFullscreen ? doc.exitFullscreen() : (doc as any).webkitExitFullscreen?.());
+    if (fullscreen && !isFs) {
+      try { requestFs(); } catch {}
+    } else if (!fullscreen && isFs) {
+      try { exitFs(); } catch {}
+    }
+    // keep store in sync if user exits with ESC
+    const onChange = () => {
+      const now = !!doc.fullscreenElement || !!(doc as any).webkitFullscreenElement;
+      if (!now && fullscreen) setFullscreen(false);
+    };
+    doc.addEventListener('fullscreenchange', onChange);
+    return () => doc.removeEventListener('fullscreenchange', onChange);
+  }, [fullscreen, setFullscreen]);
+
   return (
     <View style={styles.container}>
       {/* Header hidden in fullscreen */}
