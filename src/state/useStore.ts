@@ -4,6 +4,10 @@ import { LightningModule } from '../visualizers/lightning/Lightning';
 import { ShaderLabModule } from '../visualizers/shaderlab/ShaderLab';
 import type { VisualizerModule, AudioMappingSettings, ParamRoute } from '../core/types';
 
+
+// Dedicated Signal Lab preset type (stores only Signal Lab config)
+export type SignalLabPreset = { name: string; createdAt: number; description?: string; data: StoreState['signalLab'] };
+
 type StoreState = {
   visualizers: VisualizerModule[];
   currentId: string;
@@ -19,6 +23,35 @@ type StoreState = {
   setInputMode: (mode: 'mic' | 'tab') => void;
   rmsSmoothing: number; // 0..1 EMA alpha
   setRmsSmoothing: (alpha: number) => void;
+  advancedAnalysisEnabled: boolean;
+  setAdvancedAnalysisEnabled: (v: boolean) => void;
+  // Signal Lab config (Phase 3)
+  signalLab: {
+    enabled: boolean;
+    harmonic: { maxHarmonics: number; closenessSlope: number; hnrNeighborBins: number };
+    chord: { smoothingMs: number; types: string[]; minConfidence: number };
+    dissonance: { strength: number };
+    envelopes: {
+      rms: { attackMs: number; releaseMs: number };
+      bands: { attackMs: number; releaseMs: number };
+      noteAmp: { attackMs: number; releaseMs: number };
+      onsetHoldMs: number;
+    };
+    gating: { enableNoteGating: boolean; noteMinConfidence: number; noteMinAmp: number };
+    routing: { [k: string]: string | undefined }; // e.g., { u_amp: 'rms', u_low: 'band:0' }
+  };
+  setSignalLab: (updates: Partial<StoreState['signalLab']>) => void;
+  setSignalLabRouting: (uniformKey: string, source: string | undefined) => void;
+  // Signal Lab presets (independent)
+  signalLabPresets: Record<string, SignalLabPreset>;
+  currentSignalLabPreset?: string;
+  signalLabDirty: boolean;
+  listSignalLabPresets: () => SignalLabPreset[];
+  saveSignalLabPreset: (name: string, description?: string) => void;
+  loadSignalLabPreset: (name: string) => void;
+  renameSignalLabPreset: (oldName: string, newName: string) => void;
+  deleteSignalLabPreset: (name: string) => void;
+
   presets: Record<string, Record<string, Record<string, any>>>; // visualizerId -> name -> params
   currentPresetName?: string;
   setCurrentPresetName: (name: string | undefined) => void;
@@ -99,12 +132,13 @@ type StoreState = {
   // floating panel manager
   openPanels: Array<{ id: string; title: string; x: number; y: number; collapsed?: boolean }>;
   openPanel: (id: string, title: string, initial?: { x?: number; y?: number }) => void;
+
   closePanel: (id: string) => void;
   movePanel: (id: string, x: number, y: number) => void;
   togglePanelCollapsed: (id: string) => void;
   showHamburger: boolean;
   setShowHamburger: (v: boolean) => void;
-  // audio device selection (web)
+
   audioDevices: Array<{ deviceId: string; label: string }>;
   setAudioDevices: (list: Array<{ deviceId: string; label: string }>) => void;
   selectedDeviceId?: string;
@@ -199,6 +233,70 @@ export const useStore = create<StoreState>((set, get) => {
       }
     } catch {}
   };
+  const defaultSL: StoreState['signalLab'] = {
+    enabled: false,
+    harmonic: { maxHarmonics: 8, closenessSlope: 60, hnrNeighborBins: 1 },
+    chord: { smoothingMs: 180, types: ['maj','min','7','maj7','min7','dim','aug','sus2','sus4'], minConfidence: 0.2 },
+    dissonance: { strength: 1.0 },
+    envelopes: {
+      rms: { attackMs: 40, releaseMs: 220 },
+      bands: { attackMs: 30, releaseMs: 180 },
+      noteAmp: { attackMs: 15, releaseMs: 180 },
+      onsetHoldMs: 120,
+    },
+    gating: { enableNoteGating: true, noteMinConfidence: 0.35, noteMinAmp: 0.02 },
+    routing: { },
+  };
+  // Signal Lab preset storage helpers (inside store factory, before return)
+  const slPresetKey = 'mvs:signalLabPresets:v1';
+  const slCurrentKey = 'mvs:signalLabPresets:current';
+  const loadAllSLPresets = (): Record<string, SignalLabPreset> => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const raw = window.localStorage.getItem(slPresetKey);
+        if (raw) return JSON.parse(raw);
+      }
+    } catch {}
+    return {};
+  };
+  const saveAllSLPresets = (presets: Record<string, SignalLabPreset>) => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem(slPresetKey, JSON.stringify(presets));
+      }
+    } catch {}
+  };
+  const loadCurrentSLPresetName = (): string | undefined => {
+    try { if (typeof window !== 'undefined' && window.localStorage) return window.localStorage.getItem(slCurrentKey) || undefined; } catch {}
+    return undefined;
+  };
+  const saveCurrentSLPresetName = (name: string | undefined) => {
+    try { if (typeof window !== 'undefined' && window.localStorage) {
+      if (name) window.localStorage.setItem(slCurrentKey, name); else window.localStorage.removeItem(slCurrentKey);
+    }} catch {}
+  };
+  const makeDefaultSLPresets = (base: StoreState['signalLab']): Record<string, SignalLabPreset> => {
+    const now = Date.now();
+    const mk = (name: string, data: Partial<StoreState['signalLab']>, desc?: string): SignalLabPreset => ({ name, createdAt: now, description: desc, data: { ...base, ...data, routing: { ...base.routing, ...(data.routing||{}) } } });
+    return {
+      'Smooth & Clean': mk('Smooth & Clean', {
+        envelopes: { ...base.envelopes, rms: { attackMs: 40, releaseMs: 260 }, bands: { attackMs: 30, releaseMs: 200 }, noteAmp: { attackMs: 20, releaseMs: 220 }, onsetHoldMs: 140 },
+        gating: { ...base.gating, enableNoteGating: true, noteMinConfidence: 0.35, noteMinAmp: 0.02 },
+      }, 'Gentle AR smoothing and light gating'),
+      'Aggressive Gating': mk('Aggressive Gating', {
+        envelopes: { ...base.envelopes, rms: { attackMs: 20, releaseMs: 180 }, bands: { attackMs: 15, releaseMs: 160 }, noteAmp: { attackMs: 10, releaseMs: 150 }, onsetHoldMs: 100 },
+        gating: { ...base.gating, enableNoteGating: true, noteMinConfidence: 0.55, noteMinAmp: 0.05 },
+      }, 'Fast AR, strong note gating to suppress noise'),
+      'Harmonic Focus': mk('Harmonic Focus', {
+        harmonic: { ...base.harmonic, maxHarmonics: 10, closenessSlope: 90, hnrNeighborBins: 2 },
+        dissonance: { strength: 0.8 },
+        chord: { ...base.chord, smoothingMs: 220, minConfidence: 0.25 },
+        envelopes: { ...base.envelopes, rms: { attackMs: 35, releaseMs: 240 }, bands: { attackMs: 25, releaseMs: 200 }, noteAmp: { attackMs: 15, releaseMs: 200 }, onsetHoldMs: 140 },
+      }, 'Stricter harmonic alignment and HNR emphasis'),
+    };
+  };
+
+
   return {
     visualizers: registry,
     currentId: initial.id,
@@ -227,6 +325,60 @@ export const useStore = create<StoreState>((set, get) => {
     setInputMode: (mode) => set({ inputMode: mode }),
     rmsSmoothing: 0.5,
     setRmsSmoothing: (alpha) => set({ rmsSmoothing: Math.max(0, Math.min(1, alpha)) }),
+    advancedAnalysisEnabled: false,
+    setAdvancedAnalysisEnabled: (v) => set({ advancedAnalysisEnabled: !!v }),
+    // Signal Lab defaults
+    signalLab: defaultSL,
+    setSignalLab: (updates) => set((s)=> ({ signalLab: { ...s.signalLab, ...updates }, signalLabDirty: true })),
+
+    setSignalLabRouting: (uniformKey, source) => set((s)=> ({ signalLab: { ...s.signalLab, routing: { ...s.signalLab.routing, [uniformKey]: source } }, signalLabDirty: true })),
+    // Signal Lab presets state
+    signalLabPresets: (()=>{
+      const loaded = loadAllSLPresets();
+      if (Object.keys(loaded).length === 0) {
+        const seeded = makeDefaultSLPresets(defaultSL);
+        saveAllSLPresets(seeded);
+        return seeded;
+      }
+      return loaded;
+    })(),
+    currentSignalLabPreset: loadCurrentSLPresetName(),
+    signalLabDirty: false,
+    listSignalLabPresets: () => Object.values(get().signalLabPresets).sort((a,b)=> (a.createdAt - b.createdAt)),
+    saveSignalLabPreset: (name, description) => {
+      const s = get();
+      const preset: SignalLabPreset = { name, createdAt: Date.now(), description, data: { ...s.signalLab } };
+      const next = { ...s.signalLabPresets, [name]: preset };
+      saveAllSLPresets(next);
+      saveCurrentSLPresetName(name);
+      set({ signalLabPresets: next, currentSignalLabPreset: name, signalLabDirty: false });
+    },
+    loadSignalLabPreset: (name) => {
+      const entry = get().signalLabPresets[name];
+      if (!entry) return;
+      saveCurrentSLPresetName(name);
+      set({ signalLab: { ...entry.data }, currentSignalLabPreset: name, signalLabDirty: false });
+    },
+    renameSignalLabPreset: (oldName, newName) => {
+      const s = get();
+      const p = { ...s.signalLabPresets };
+      const entry = p[oldName]; if (!entry) return;
+      delete p[oldName];
+      p[newName] = { ...entry, name: newName };
+      saveAllSLPresets(p);
+      const cur = s.currentSignalLabPreset === oldName ? newName : s.currentSignalLabPreset;
+      saveCurrentSLPresetName(cur);
+      set({ signalLabPresets: p, currentSignalLabPreset: cur });
+    },
+    deleteSignalLabPreset: (name) => {
+      const s = get();
+      const p = { ...s.signalLabPresets };
+      delete p[name];
+      saveAllSLPresets(p);
+      const cur = s.currentSignalLabPreset === name ? undefined : s.currentSignalLabPreset;
+      saveCurrentSLPresetName(cur);
+      set({ signalLabPresets: p, currentSignalLabPreset: cur });
+    },
     presets: loadAllPresets(),
     currentPresetName: undefined,
     setCurrentPresetName: (name) => set({ currentPresetName: name }),
@@ -347,6 +499,7 @@ export const useStore = create<StoreState>((set, get) => {
         presets: s.presets,
         pinned: s.pinnedParams,
         presetMeta: s.presetMeta,
+        signalLab: s.signalLab,
       };
       saveAllSessions(sessions);
       set({ currentSessionName: name } as any);
@@ -382,6 +535,7 @@ export const useStore = create<StoreState>((set, get) => {
         if (typeof ss.theme.brightness === 'number') updates.themeBrightness = ss.theme.brightness;
         if (typeof ss.theme.saturation === 'number') updates.themeSaturation = ss.theme.saturation;
       }
+      if (ss.signalLab && typeof ss.signalLab === 'object') updates.signalLab = { ...get().signalLab, ...ss.signalLab };
       if (Array.isArray(ss.routes)) updates.routes = ss.routes;
       if (ss.presets && typeof ss.presets === 'object') updates.presets = ss.presets;
       if (ss.pinned && typeof ss.pinned === 'object') updates.pinnedParams = ss.pinned;

@@ -15,13 +15,19 @@ export type FeatureFrame = {
   onsetRatePerSec?: number; // approximate recent onsets per second
   notesMidi?: Float32Array; // up to N top notes
   notesAmp?: Float32Array; // corresponding amplitudes (0..1)
+  notesConfidence?: Float32Array; // optional per-note confidence 0..1
   zeroCrossingRate?: number; // 0..1 normalized ZCR
   chroma12?: Float32Array; // length 12 pitch-class energies (normalized)
   keyIndex?: number; // 0..11 (C..B)
   keyIsMajor?: boolean;
   keyConfidence?: number; // 0..1
+  chordName?: string; // e.g., "C:maj7"
+  chordConfidence?: number; // 0..1
+  resonanceScore?: number; // 0..1 alignment to harmonic series
+  dissonanceScore?: number; // 0..1 (higher = more dissonant)
+  harmonicToNoiseRatio?: number; // 0..1
   vocalBandEnergy?: number; // fraction of energy 300..3400Hz
-  percussiveScore?: number; // 0..1 heuristic percussiveness
+  percussiveScore?: number; // 0..1 heuristic/advanced percussiveness
   harmonicScore?: number; // 0..1 tonal/harmonic emphasis
 };
 

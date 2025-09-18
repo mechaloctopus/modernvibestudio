@@ -12,6 +12,7 @@ import type { FeatureFrame } from '../core/types';
 import { AudioDevicesPanel } from './AudioDevicesPanel';
 import { ShaderLabEditor } from './ShaderLabEditor';
 import { SessionsPanel } from './SessionsPanel';
+import { SignalLabPanel } from './SignalLabPanel';
 
 export const PanelManager: React.FC<{ frame: FeatureFrame | null }>= ({ frame }) => {
   const { openPanels, movePanel, closePanel, togglePanelCollapsed } = useStore();
@@ -77,6 +78,13 @@ function renderPanel(id: string, title: string, collapsed: boolean, onToggle: ()
     return (
       <Panel title={title} collapsed={collapsed} onToggle={onToggle} onClose={onClose}>
         <SessionsPanel />
+      </Panel>
+    );
+  }
+  if (id === 'signal') {
+    return (
+      <Panel title={title} collapsed={collapsed} onToggle={onToggle} onClose={onClose}>
+        <SignalLabPanel />
       </Panel>
     );
   }

@@ -4,13 +4,10 @@ import SquidPreset from "./Squid";
 import MountainFogBeachPreset from "./MountainFogBeach";
 import GrowingMountainsPreset from "./GrowingMountains";
 import ColorMappingPortalPreset from "./ColorMappingPortal";
-import AudioAnalysisPreset from "./AudioAnalysis";
-import MusicCirclePreset from "./MusicCircle";
-import LayeredOrbitalsPreset from "./LayeredOrbitals";
-import BeatTunnelPreset from "./BeatTunnel";
-import PolarBarsPreset from "./PolarBars";
-import MelodySpiralPreset from "./MelodySpiral";
-import KaleidoBloomPreset from "./KaleidoBloom";
+import InteractiveFogParticles from "./InteractiveFogParticles";
+import ResonanceLens from "./ResonanceLens";
+import OctaveStrata from "./OctaveStrata";
+
 
 export const PRESETS: PresetModule[] = [
   GridbreakPreset,
@@ -18,13 +15,9 @@ export const PRESETS: PresetModule[] = [
   MountainFogBeachPreset,
   GrowingMountainsPreset,
   ColorMappingPortalPreset,
-  AudioAnalysisPreset,
-  MusicCirclePreset,
-  LayeredOrbitalsPreset,
-  BeatTunnelPreset,
-  PolarBarsPreset,
-  MelodySpiralPreset,
-  KaleidoBloomPreset,
+  InteractiveFogParticles,
+  ResonanceLens,
+  OctaveStrata,
 ];
 
 export default PRESETS;

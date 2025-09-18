@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import type { FeatureFrame } from '../core/types';
+import { useStore } from '../state/useStore';
 
 type AudioEngineListener = (frame: FeatureFrame) => void;
 
@@ -185,18 +186,163 @@ export class AudioEngine {
       const gmean = Math.exp(geoSum / Math.max(1, len));
       const amean = sumMag / Math.max(1, len);
       flatness = amean > 0 ? Math.max(0, Math.min(1, gmean / amean)) : 0;
-      // top-N peaks
+      // top-N peaks (sorted)
       peaks.sort((a,b)=> b.mag - a.mag);
       const N = 5;
-      const notesMidi = new Float32Array(Math.min(N, peaks.length));
-      const notesAmp = new Float32Array(Math.min(N, peaks.length));
-      for (let k = 0; k < notesMidi.length; k++) {
-        const f = (peaks[k].idx * this.audioContext.sampleRate) / (2 * len);
-        notesMidi[k] = 69 + 12 * Math.log2(Math.max(1e-6, f) / 440);
-        notesAmp[k] = peaks[k].mag; // already scaled by sensitivity
+      const adv = useStore.getState().advancedAnalysisEnabled;
+      let notesMidi = new Float32Array(Math.min(N, peaks.length));
+      let notesAmp = new Float32Array(Math.min(N, peaks.length));
+      let notesConf = new Float32Array(Math.min(N, peaks.length));
+      if (!adv) {
+        for (let k = 0; k < notesMidi.length; k++) {
+          const f = (peaks[k].idx * this.audioContext.sampleRate) / (2 * len);
+          notesMidi[k] = 69 + 12 * Math.log2(Math.max(1e-6, f) / 440);
+          notesAmp[k] = peaks[k].mag; // already scaled by sensitivity
+          notesConf[k] = Math.max(0, Math.min(1, peaks[k].mag));
+        }
+      } else {
+        // Lightweight polyphonic f0 voting and assignment
+        const sr = this.audioContext.sampleRate;
+        const ny = sr / 2;
+        const maxPeaks = Math.min(40, peaks.length);
+        const voteBins = new Float32Array(128); // MIDI ~0..127
+        const freqs: number[] = new Array(maxPeaks);
+        const mags: number[] = new Array(maxPeaks);
+
+        for (let p = 0; p < maxPeaks; p++) {
+          const i = peaks[p].idx; const m = peaks[p].mag;
+          const f = (i * sr) / (2 * len);
+          freqs[p] = f; mags[p] = m;
+          const maxH = Math.max(1, Math.min(12, useStore.getState().signalLab?.harmonic?.maxHarmonics ?? 8));
+          for (let h = 1; h <= maxH; h++) {
+            const f0 = f / h; if (f0 < 40 || f0 > 4000) continue;
+            const midi = 69 + 12 * Math.log2(f0 / 440);
+            const bin = Math.max(0, Math.min(127, Math.round(midi)));
+            voteBins[bin] += m / h;
+          }
+        }
+        // pick up to N strongest bins separated by >= 2 semitones
+        const chosen: number[] = [];
+        for (let t = 0; t < 12; t++) {
+          let bestV = 0, bestI = -1;
+          for (let i = 0; i < voteBins.length; i++) {
+            const v = voteBins[i];
+            if (v > bestV && chosen.every(ci => Math.abs(ci - i) >= 2)) { bestV = v; bestI = i; }
+          }
+          if (bestI < 0 || chosen.length >= N) break;
+          chosen.push(bestI);
+          // zero neighborhood to avoid near-duplicates
+          for (let j = Math.max(0, bestI-1); j <= Math.min(127, bestI+1); j++) voteBins[j] *= 0.2;
+        }
+        // Assign peaks to closest harmonic of chosen f0s
+        const out: Array<{ midi:number; amp:number; conf:number }>= [];
+        for (const mi of chosen) {
+          const f0 = 440 * Math.pow(2, (mi - 69)/12);
+          let energy = 0; let align = 0; let weight = 0;
+          for (let p = 0; p < maxPeaks; p++) {
+            const f = freqs[p]; const m = mags[p]; if (m <= 0) continue;
+            const h = Math.max(1, Math.round(f / f0)); const maxH2 = Math.max(1, Math.min(12, useStore.getState().signalLab?.harmonic?.maxHarmonics ?? 8)); if (h > maxH2) continue;
+            const fh = f0 * h; const rel = Math.abs((f - fh)/Math.max(1e-3, fh));
+            const slope = Math.max(1, Math.min(200, useStore.getState().signalLab?.harmonic?.closenessSlope ?? 60));
+            const closeness = Math.exp(-rel * slope); // ~1 when aligned within ~1-2%
+            energy += m * closeness;
+            align += closeness * m; weight += m;
+          }
+          if (energy > 0) out.push({ midi: mi, amp: energy, conf: weight>0 ? Math.max(0, Math.min(1, align/weight)) : 0 });
+        }
+        out.sort((a,b)=> b.amp - a.amp);
+        const take = Math.min(N, out.length);
+        notesMidi = new Float32Array(take);
+        notesAmp = new Float32Array(take);
+        notesConf = new Float32Array(take);
+        for (let k = 0; k < take; k++) { notesMidi[k] = out[k].midi; notesAmp[k] = out[k].amp; notesConf[k] = out[k].conf; }
       }
       (this as any)._notesMidi = notesMidi;
       (this as any)._notesAmp = notesAmp;
+      (this as any)._notesConf = notesConf;
+
+	      // Advanced metrics (opt-in)
+	      const adv2 = useStore.getState().advancedAnalysisEnabled;
+	      if (adv2) {
+	        // Advanced chord detection with extended templates
+	        if (chroma12 && chroma12.length === 12) {
+	          const SL = useStore.getState().signalLab;
+          const allowed = new Set((SL?.chord?.types ?? ['maj','min','7','maj7','min7','dim','aug','sus2','sus4']).map(String));
+          const allT: Array<{ name: string; iv: number[] }>= [
+	            { name: 'maj', iv: [0,4,7] }, { name: 'min', iv: [0,3,7] },
+	            { name: '7', iv: [0,4,7,10] }, { name: 'maj7', iv: [0,4,7,11] }, { name: 'min7', iv: [0,3,7,10] },
+	            { name: 'dim', iv: [0,3,6] }, { name: 'aug', iv: [0,4,8] }, { name: 'sus2', iv: [0,2,7] }, { name: 'sus4', iv: [0,5,7] },
+	          ];
+          const T = allT.filter(t => allowed.has(t.name));
+	          let best = -1, bestName = 'n/a';
+	          for (let r = 0; r < 12; r++) {
+	            for (const tpl of T) {
+	              let s = 0;
+	              for (const iv of tpl.iv) s += chroma12[(r + iv) % 12] || 0;
+	              if (s > best) { best = s; bestName = `${r}:${tpl.name}`; }
+	            }
+	          }
+	          const avg = T.length > 0 ? best / (T.length * 1.5) : 0;
+	          chordName = bestName;
+	          chordConfidence = Math.max(0, Math.min(1, best - avg));
+          {
+            const minC = useStore.getState().signalLab?.chord?.minConfidence ?? 0;
+            if (chordConfidence < minC) { chordName = 'n/a'; }
+          }
+
+	          // simple temporal smoothing
+	          const lastName = (this as any)._lastChordName as string | undefined;
+	          const lastConf = (this as any)._lastChordConf as number | undefined;
+	          if (lastName && lastName !== chordName && (lastConf ?? 0) > 0.7 && (performance.now() - ((this as any)._lastChordTime || 0)) < (useStore.getState().signalLab?.chord?.smoothingMs ?? 180)) {
+	            chordName = lastName; chordConfidence = Math.max(0.6, (lastConf ?? 0.6) * 0.9);
+	          }
+	          (this as any)._lastChordName = chordName; (this as any)._lastChordConf = chordConfidence; (this as any)._lastChordTime = performance.now();
+	        }
+	        // Harmonic series alignment and HNR from detected notes
+	        const nm: Float32Array | undefined = (this as any)._notesMidi;
+	        const na: Float32Array | undefined = (this as any)._notesAmp;
+	        if (nm && na && nm.length > 0) {
+	          const sr = this.audioContext.sampleRate; const nBins = spectrum.length; const nyq = sr/2;
+	          let H = 0, A = 0, alignSum = 0, wSum = 0;
+	          for (let k = 0; k < nm.length; k++) {
+	            const f0 = 440 * Math.pow(2, (nm[k] - 69)/12); const a0 = na[k] ?? 0;
+	            for (let h = 1; h <= 8; h++) {
+	              const fh = f0 * h; if (fh >= nyq) break;
+	              const idx = Math.max(0, Math.min(nBins-1, Math.round((fh / nyq) * nBins)));
+	              const nbh = Math.max(0, Math.min(2, useStore.getState().signalLab?.harmonic?.hnrNeighborBins ?? 1));
+	              let win = (spectrum[idx] || 0);
+	              for (let nb = 1; nb <= nbh; nb++) {
+	                win += (spectrum[Math.max(0, idx-nb)] || 0) * 0.5 + (spectrum[Math.min(nBins-1, idx+nb)] || 0) * 0.5;
+	              }
+	              H += win;
+	              // alignment measure reusing adjacent bins
+	              const prev = spectrum[Math.max(0, idx-1)] || 0; const cur = spectrum[idx] || 0; const next = spectrum[Math.min(nBins-1, idx+1)] || 0;
+	              const local = Math.max(0, cur - 0.5*(prev+next));
+	              alignSum += local * a0; wSum += a0;
+	            }
+	            A += Math.max(0, a0);
+	          }
+	          const total = spectrum.reduce((s,v)=> s+v, 0);
+	          harmonicToNoiseRatio = (H > 0 && total > 0) ? Math.max(0, Math.min(1, H / Math.max(1e-6, total))) : 0;
+	          resonanceScore = (wSum > 0) ? Math.max(0, Math.min(1, alignSum / wSum * 2)) : 0;
+	        }
+	        // Dissonance (roughness) from detected notes pairs using Bark distance
+	        const nm2: Float32Array | undefined = (this as any)._notesMidi;
+	        const na2: Float32Array | undefined = (this as any)._notesAmp;
+	        if (nm2 && na2 && nm2.length >= 2) {
+	          const toHz = (m:number)=> 440 * Math.pow(2, (m - 69)/12);
+	          const bark = (f:number)=> 13*Math.atan(0.00076*f)+3.5*Math.atan(Math.pow(f/7500,2));
+	          let sum = 0, w = 0;
+	          for (let i = 0; i < nm2.length; i++) for (let j = i+1; j < nm2.length; j++) {
+	            const f1 = toHz(nm2[i]); const f2 = toHz(nm2[j]); const s = Math.abs(bark(f2)-bark(f1));
+	            const a = (na2[i] ?? 0) * (na2[j] ?? 0);
+	            const rough = Math.max(0, Math.exp(-3.5*s) - Math.exp(-5.75*s));
+	            sum += rough * a; w += a;
+	          }
+	          { const strength = Math.max(0, useStore.getState().signalLab?.dissonance?.strength ?? 1); dissonanceScore = w>0 ? Math.max(0, Math.min(1, (sum / w * 3) * strength)) : 0; }
+	        }
+	      }
+
     }
     // crude band energies and onset (simple thresholded derivative of RMS)
     let bandEnergies: FeatureFrame['bandEnergies'] = undefined;
@@ -207,6 +353,12 @@ export class AudioEngine {
     let keyIndex: number | undefined;
     let keyIsMajor: boolean | undefined;
     let keyConfidence: number | undefined;
+    let chordName: string | undefined;
+    let chordConfidence: number | undefined;
+    let resonanceScore: number | undefined;
+    let dissonanceScore: number | undefined;
+    let harmonicToNoiseRatio: number | undefined;
+
     if (spectrum && this.audioContext) {
       const n = spectrum.length;
       const low = avg(spectrum, 0, Math.floor(n * 0.15));
@@ -263,6 +415,11 @@ export class AudioEngine {
       const flat = flatness ?? 0;
       percussiveScore = Math.max(0, Math.min(1, 0.6*zcrNorm + 0.4*flat));
       harmonicScore = Math.max(0, Math.min(1, 1 - flat));
+      // Advanced override using HNR (opt-in)
+      if (useStore.getState().advancedAnalysisEnabled && harmonicToNoiseRatio != null) {
+        percussiveScore = Math.max(0, Math.min(1, 0.5*zcrNorm + 0.25*flat + 0.25*(1 - harmonicToNoiseRatio)));
+        harmonicScore = Math.max(0, Math.min(1, 0.7*harmonicToNoiseRatio + 0.3*(1 - flat)));
+      }
     }
     const now = performance.now();
     const last = (this as any)._lastRmsTime ?? now;
@@ -300,6 +457,13 @@ export class AudioEngine {
       onsetRatePerSec,
       notesMidi: (this as any)._notesMidi,
       notesAmp: (this as any)._notesAmp,
+      notesConfidence: (this as any)._notesConf,
+      chordName,
+      chordConfidence,
+      resonanceScore,
+      dissonanceScore,
+      harmonicToNoiseRatio,
+
       zeroCrossingRate: Math.max(0, Math.min(1, zc / Math.max(1, this.dataArray.length-1))),
       chroma12,
       keyIndex,

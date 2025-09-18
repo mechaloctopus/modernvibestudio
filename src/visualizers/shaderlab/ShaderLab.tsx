@@ -1564,21 +1564,121 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
     return () => clearInterval(id);
   }, []);
 
+  // Signal Lab runtime envelopes/state
+  const slLastTimeSec = React.useRef<number | null>(null);
+  const slEnv = React.useRef<{ rms:number; low:number; mid:number; high:number; onset:number; bands: Float32Array; notesAmp: Float32Array }>({
+    rms: 0, low: 0, mid: 0, high: 0, onset: 0,
+    bands: new Float32Array(16),
+    notesAmp: new Float32Array(4),
+  });
+
+
   const storeState = require('../../state/useStore').useStore.getState();
   const audioMapping = storeState.audioMapping as any;
   const mappedBandsProp = (params as any)?._global?.mappedBands as number[] | undefined;
   const bandsRaw = mappedBandsProp && mappedBandsProp.length >= 16
     ? mappedBandsProp
     : applySpectrumMapping(frame?.spectrum, frame?.sampleRateHz, audioMapping);
+
+
   const b0 = bandsRaw[0] || 0,  b1 = bandsRaw[1] || 0,  b2 = bandsRaw[2] || 0,  b3 = bandsRaw[3] || 0;
   const b4 = bandsRaw[4] || 0,  b5 = bandsRaw[5] || 0,  b6 = bandsRaw[6] || 0,  b7 = bandsRaw[7] || 0;
   const b8 = bandsRaw[8] || 0,  b9 = bandsRaw[9] || 0, b10 = bandsRaw[10] || 0, b11 = bandsRaw[11] || 0;
   const b12 = bandsRaw[12] || 0, b13 = bandsRaw[13] || 0, b14 = bandsRaw[14] || 0, b15 = bandsRaw[15] || 0;
-  const vec = (a: number, b: number, c: number, d: number) => [a, b, c, d];
   const low = frame?.bandEnergies?.low ?? b0;
   const mid = frame?.bandEnergies?.mid ?? b8;
   const high = frame?.bandEnergies?.high ?? b15;
   const onset = frame?.onsetPercussive ? 1 : 0;
+
+  // Signal Lab processing (opt-in)
+  const SL = (storeState as any).signalLab as any;
+  const slEnabled = !!(SL && SL.enabled);
+  const nowSec = time; // use shader time seconds
+  const dtSec = (() => {
+    const last = slLastTimeSec.current; slLastTimeSec.current = nowSec; return last == null ? 0.016 : Math.max(0.001, Math.min(0.1, nowSec - last));
+  })();
+  const smoothAR = (prev:number, val:number, aMs:number, rMs:number) => {
+    const up = val > prev;
+    const tau = (up ? Math.max(1e-3, aMs*0.001) : Math.max(1e-3, rMs*0.001));
+    const alpha = 1 - Math.exp(-dtSec / tau);
+    return prev + (val - prev) * alpha;
+  };
+
+  const rmsRaw = frame?.amplitudeRms ?? 0;
+  const centroidRaw = frame?.spectralCentroidHz ?? 0;
+  let p_rms = rmsRaw, p_low = low, p_mid = mid, p_high = high, p_onset = onset;
+  const bandsProc = new Float32Array(16);
+
+  if (slEnabled) {
+    const env = slEnv.current;
+    const envs = SL.envelopes;
+    p_rms = env.rms = smoothAR(env.rms, rmsRaw, envs.rms.attackMs, envs.rms.releaseMs);
+    p_low = env.low = smoothAR(env.low, low, envs.bands.attackMs, envs.bands.releaseMs);
+    p_mid = env.mid = smoothAR(env.mid, mid, envs.bands.attackMs, envs.bands.releaseMs);
+    p_high = env.high = smoothAR(env.high, high, envs.bands.attackMs, envs.bands.releaseMs);
+    // Onset hold/decay
+    const holdTau = Math.max(1e-3, (SL.envelopes.onsetHoldMs||0) * 0.001);
+    const onsetTarget = onset > 0 ? 1 : 0;
+    env.onset = onset > 0 ? 1 : env.onset * Math.exp(-dtSec / holdTau);
+    p_onset = env.onset;
+    // Bands (16)
+    const srcBands = [b0,b1,b2,b3,b4,b5,b6,b7,b8,b9,b10,b11,b12,b13,b14,b15];
+    for (let i=0;i<16;i++) {
+      const prev = env.bands[i] || 0;
+      const v = srcBands[i] || 0;
+      const s = smoothAR(prev, v, envs.bands.attackMs, envs.bands.releaseMs);
+      env.bands[i] = s; bandsProc[i] = s;
+    }
+  } else {
+    const srcBands = [b0,b1,b2,b3,b4,b5,b6,b7,b8,b9,b10,b11,b12,b13,b14,b15];
+    for (let i=0;i<16;i++) bandsProc[i] = srcBands[i] || 0;
+  }
+
+  // Notes gating + smoothing (top 4)
+  let notesProc = frame?.notesMidi || new Float32Array(0);
+  let notesAmpProc = frame?.notesAmp || new Float32Array(0);
+  if (slEnabled) {
+    const env = slEnv.current;
+    const outN = new Float32Array(4);
+    const outA = new Float32Array(4);
+    const conf = frame?.notesConfidence || new Float32Array(0);
+    const gateOn = !!SL.gating?.enableNoteGating;
+    const minC = SL.gating?.noteMinConfidence ?? 0;
+    const minA = SL.gating?.noteMinAmp ?? 0;
+    for (let i=0;i<4;i++) {
+      const n = notesProc[i] ?? -1;
+      const a = notesAmpProc[i] ?? 0;
+      const c = conf[i] ?? 0;
+      const pass = !gateOn || ((c >= minC) && (a >= minA));
+      outN[i] = pass ? (n ?? -1) : -1;
+      const target = pass ? (a ?? 0) : 0;
+      const prev = env.notesAmp[i] || 0;
+      const s = smoothAR(prev, target, SL.envelopes.noteAmp.attackMs, SL.envelopes.noteAmp.releaseMs);
+      env.notesAmp[i] = s; outA[i] = s;
+    }
+    notesProc = outN; notesAmpProc = outA;
+  }
+
+  // Uniform routing helper
+  const routeVal = (key: string, defVal: number): number => {
+    if (!slEnabled) return defVal;
+    const src = SL.routing?.[key];
+    if (!src) return defVal;
+    if (src === 'rms') return p_rms;
+    if (src === 'low') return p_low;
+    if (src === 'mid') return p_mid;
+    if (src === 'high') return p_high;
+    if (src === 'onset') return p_onset;
+    if (src === 'centroid') return centroidRaw;
+    if (src === 'note') return frame?.midiNote ?? -1;
+    if (src.startsWith('band:')) {
+      const idx = Math.max(0, Math.min(15, parseInt(src.split(':')[1] || '0', 10)));
+      return bandsProc[idx] || 0;
+    }
+    return defVal;
+  };
+
+  const vec = (a: number, b: number, c: number, d: number) => [a, b, c, d];
   // Build tone color uniform arrays (memoized) from store toneColorMap and saturation
   const { pitchR, pitchG, pitchB } = React.useMemo(() => {
     const tc = storeState.toneColorMap as Array<{ hueDeg: number; brightness: number }>;
@@ -1641,21 +1741,21 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
   const uniforms: any = {
     u_res: [SCREEN_W, SCREEN_H],
     u_time: time,
-    u_amp: frame?.amplitudeRms ?? 0,
-    u_centroid: frame?.spectralCentroidHz ?? 0,
-    u_note: frame?.midiNote ?? -1,
-    u_low: low,
-    u_mid: mid,
-    u_high: high,
+    u_amp: routeVal('u_amp', slEnabled ? p_rms : (frame?.amplitudeRms ?? 0)),
+    u_centroid: routeVal('u_centroid', centroidRaw),
+    u_note: routeVal('u_note', frame?.midiNote ?? -1),
+    u_low: routeVal('u_low', slEnabled ? p_low : low),
+    u_mid: routeVal('u_mid', slEnabled ? p_mid : mid),
+    u_high: routeVal('u_high', slEnabled ? p_high : high),
     u_themeB: storeState.themeBrightness ?? 1.0,
     u_themeS: storeState.themeSaturation ?? 1.0,
-    u_onset: onset,
-    u_bands0: vec(b0, b1, b2, b3),
-    u_bands1: vec(b4, b5, b6, b7),
-    u_bands2: vec(b8, b9, b10, b11),
-    u_bands3: vec(b12, b13, b14, b15),
-    u_notesA: vec(notesA[0]||-1, notesA[1]||-1, notesA[2]||-1, notesA[3]||-1),
-    u_notesAmpA: vec(notesAmpA[0]||0, notesAmpA[1]||0, notesAmpA[2]||0, notesAmpA[3]||0),
+    u_onset: routeVal('u_onset', slEnabled ? p_onset : onset),
+    u_bands0: vec(bandsProc[0]||b0, bandsProc[1]||b1, bandsProc[2]||b2, bandsProc[3]||b3),
+    u_bands1: vec(bandsProc[4]||b4, bandsProc[5]||b5, bandsProc[6]||b6, bandsProc[7]||b7),
+    u_bands2: vec(bandsProc[8]||b8, bandsProc[9]||b9, bandsProc[10]||b10, bandsProc[11]||b11),
+    u_bands3: vec(bandsProc[12]||b12, bandsProc[13]||b13, bandsProc[14]||b14, bandsProc[15]||b15),
+    u_notesA: vec((notesProc[0]??-1), (notesProc[1]??-1), (notesProc[2]??-1), (notesProc[3]??-1)),
+    u_notesAmpA: vec((notesAmpProc[0]??0), (notesAmpProc[1]??0), (notesAmpProc[2]??0), (notesAmpProc[3]??0)),
     u_pitchR0: vec(pitchR[0]||0, pitchR[1]||0, pitchR[2]||0, pitchR[3]||0),
     u_pitchR1: vec(pitchR[4]||0, pitchR[5]||0, pitchR[6]||0, pitchR[7]||0),
     u_pitchR2: vec(pitchR[8]||0, pitchR[9]||0, pitchR[10]||0, pitchR[11]||0),
@@ -1792,6 +1892,53 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
   }, [params.fragment, (params as any).modularMode, (params as any).modularPresetId]);
   const [dashOpen, setDashOpen] = React.useState(false);
   React.useEffect(()=>{ try { const v = window.localStorage.getItem('mvs:shaderlab:dashOpen'); if (v) setDashOpen(v==='1'); } catch {} },[]);
+  // Draggable/collapsible modular fragment editor (web only)
+  const [editorOpen, setEditorOpen] = React.useState(true);
+  const [editorPos, setEditorPos] = React.useState<{ x: number; y: number }>({ x: 12, y: 232 });
+  const dragRef = React.useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
+  const [dragging, setDragging] = React.useState(false);
+  const [moveMode, setMoveMode] = React.useState(false);
+  const [showErrorDetails, setShowErrorDetails] = React.useState(false);
+  React.useEffect(() => {
+    try {
+      const eo = window.localStorage.getItem('mvs:shaderlab:editorOpen');
+      if (eo) setEditorOpen(eo === '1');
+      const ep = window.localStorage.getItem('mvs:shaderlab:editorPos');
+      if (ep) {
+        const v = JSON.parse(ep);
+        if (typeof v?.x === 'number' && typeof v?.y === 'number') setEditorPos({ x: v.x, y: v.y });
+      }
+    } catch {}
+  }, []);
+  const handleHeaderMouseDown = (e: any) => {
+    try {
+      setDragging(true);
+      dragRef.current = { sx: e.clientX, sy: e.clientY, ox: editorPos.x, oy: editorPos.y };
+      const onMove = (ev: any) => {
+        if (!dragRef.current) return;
+        const dx = (ev.clientX - dragRef.current.sx);
+        const dy = (ev.clientY - dragRef.current.sy);
+        const nx = Math.max(6, Math.min((window.innerWidth || 1024) - 200, dragRef.current.ox + dx));
+        const ny = Math.max(6, Math.min((window.innerHeight || 768) - 60, dragRef.current.oy + dy));
+        setEditorPos({ x: nx, y: ny });
+        // update origin so long drags don't accumulate float error
+        dragRef.current.ox = nx; dragRef.current.oy = ny; dragRef.current.sx = ev.clientX; dragRef.current.sy = ev.clientY;
+      };
+      const onUp = () => {
+        setDragging(false);
+        try { if (dragRef.current) { window.localStorage.setItem('mvs:shaderlab:editorPos', JSON.stringify({ x: dragRef.current.ox, y: dragRef.current.oy })); } } catch {}
+        dragRef.current = null;
+        window.removeEventListener('mousemove', onMove as any);
+        window.removeEventListener('mouseup', onUp as any);
+      };
+      window.addEventListener('mousemove', onMove as any);
+      window.addEventListener('mouseup', onUp as any);
+    } catch {}
+  };
+  const toggleEditorOpen = () => {
+    const v = !editorOpen; setEditorOpen(v); try { window.localStorage.setItem('mvs:shaderlab:editorOpen', v ? '1' : '0'); } catch {}
+  };
+
 
 
   // Build and apply routing presets when a ShaderLab preset is selected
@@ -1966,27 +2113,71 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
 
       {/* Modular fragment editor (web only) */}
       {modularMode && Platform.OS === 'web' && !isFullscreen ? (
-        <div style={{ position: 'absolute', left: 12, top: 12 + 220, width: 520 }}>
-          <div style={{ background: 'rgba(0,0,0,0.55)', borderRadius: 12, padding: 8, border: '1px solid #222' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <div style={{ position: 'absolute', left: editorPos.x, top: editorPos.y, width: 520, zIndex: 9999, cursor: moveMode ? (dragging ? 'grabbing' : 'move') : 'default' }} onMouseDown={moveMode ? handleHeaderMouseDown : undefined}>
+          <div style={{ background: 'rgba(0,0,0,0.6)', borderRadius: 12, border: '1px solid #222', boxShadow: '0 6px 18px rgba(0,0,0,0.45)' }}>
+            <div
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 8px', cursor: dragging ? 'grabbing' : 'grab', userSelect: 'none', borderBottom: editorOpen ? '1px solid #333' : 'none' }}
+              onMouseDown={handleHeaderMouseDown}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span style={{ color: 'white', fontWeight: 'bold' }}>GLSL Fragment (live)</span>
                 {webCompileError ? (
                   <span style={{ color: '#ff6b6b', fontSize: 12 }}>Shader error: {webCompileError}</span>
                 ) : null}
               </div>
-              <button
-                onClick={() => { try { require('../../state/useStore').useStore.getState().setParam('modularFragmentOverride', ''); setWebCompileError(null); } catch {} }}
-                style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.08)', color: 'white', border: '1px solid #444', borderRadius: 6, cursor: 'pointer' }}
-                title="Reset to preset source"
-              >Reset</button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={() => { try { require('../../state/useStore').useStore.getState().setParam('modularFragmentOverride', ''); setWebCompileError(null); } catch {} }}
+                  style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.08)', color: 'white', border: '1px solid #444', borderRadius: 6, cursor: 'pointer' }}
+                  title="Reset to preset source"
+                >Reset</button>
+                <button
+                  onClick={() => setMoveMode(v => !v)}
+                  style={{ padding: '4px 8px', background: moveMode ? 'rgba(100,255,100,0.15)' : 'rgba(255,255,255,0.08)', color: 'white', border: '1px solid #444', borderRadius: 6, cursor: 'pointer' }}
+                  title="Toggle Move Mode (drag anywhere)"
+                >{moveMode ? 'Done Moving' : 'Move'}</button>
+                {webCompileError ? (
+                  <>
+                    <button
+                      onClick={() => setShowErrorDetails(v => !v)}
+                      style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.08)', color: 'white', border: '1px solid #444', borderRadius: 6, cursor: 'pointer' }}
+                      title="Show/Hide shader error details"
+                    >{showErrorDetails ? 'Hide Error' : 'Show Error'}</button>
+                    <button
+                      onClick={() => { try { (navigator as any)?.clipboard?.writeText(String(webCompileError)); } catch {} }}
+                      style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.08)', color: 'white', border: '1px solid #444', borderRadius: 6, cursor: 'pointer' }}
+                      title="Copy error to clipboard"
+                    >Copy Error</button>
+                  </>
+                ) : null}
+
+                <button
+                  onClick={toggleEditorOpen}
+                  style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.08)', color: 'white', border: '1px solid #444', borderRadius: 6, cursor: 'pointer' }}
+                  title="Collapse/Expand"
+                >{editorOpen ? 'Collapse' : 'Expand'}</button>
+              </div>
             </div>
-            <textarea
-              spellCheck={false}
-              style={{ width: '100%', height: 260, fontFamily: 'monospace', fontSize: 12, color: '#ddd', background: 'rgba(0,0,0,0.6)', border: '1px solid #333', borderRadius: 8, padding: 8 }}
-              value={(((params as any).modularFragmentOverride as string) && ((params as any).modularFragmentOverride as string).length > 0) ? (params as any).modularFragmentOverride : activeUserBody}
-              onChange={(e: any) => { try { require('../../state/useStore').useStore.getState().setParam('modularFragmentOverride', e.target.value); } catch {} }}
-            />
+            {showErrorDetails && webCompileError ? (
+              <div style={{ padding: 8 }}>
+                <textarea
+                  readOnly
+                  style={{ width: '100%', height: 120, fontFamily: 'monospace', fontSize: 12, color: '#ffb4b4', background: 'rgba(60,0,0,0.5)', border: '1px solid #663', borderRadius: 8, padding: 8 }}
+                  value={String(webCompileError)}
+                />
+              </div>
+            ) : null}
+
+            {editorOpen ? (
+              <div style={{ padding: 8 }}>
+                <textarea
+                  spellCheck={false}
+                  style={{ width: '100%', height: 260, fontFamily: 'monospace', fontSize: 12, color: '#ddd', background: 'rgba(0,0,0,0.6)', border: '1px solid #333', borderRadius: 8, padding: 8 }}
+                  value={(((params as any).modularFragmentOverride as string) && ((params as any).modularFragmentOverride as string).length > 0) ? (params as any).modularFragmentOverride : activeUserBody}
+                  onChange={(e: any) => { try { require('../../state/useStore').useStore.getState().setParam('modularFragmentOverride', e.target.value); } catch {} }}
+                />
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -2004,11 +2195,11 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
         <div style={{ position: 'absolute', right: 12, top: 52, width: 380, maxHeight: 520, overflow: 'auto', background: 'rgba(0,0,0,0.6)', border: '1px solid #222', borderRadius: 12, padding: 10 }}>
           <div style={{ color: 'white', fontWeight: 'bold', marginBottom: 6 }}>Audio Dashboard</div>
           <div style={{ color: '#ddd', fontSize: 12, lineHeight: 1.4, display: 'grid', gap: 8 }}>
-            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Raw Audio</div>
+            <div style={{ fontWeight: 'bold', color: '#9cf' }} title="RMS (energy), Spectral centroid (brightness), Zero-crossing rate (noisiness)">Raw Audio</div>
             <div>RMS: {(frame?.amplitudeRms ?? 0).toFixed(3)} | Centroid: {(frame?.spectralCentroidHz ?? 0).toFixed(1)} Hz | ZCR: {(frame?.zeroCrossingRate ?? 0).toFixed(3)}</div>
             <div>Rolloff: {(frame?.spectralRolloffHz ?? 0).toFixed(1)} Hz | Flatness: {(frame?.spectralFlatness ?? 0).toFixed(3)} | SR: {(frame?.sampleRateHz ?? 0)}</div>
             <div>Dominant Freq: {(frame?.dominantFreqHz ?? 0).toFixed(1)} Hz</div>
-            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Frequency Bands (0..15)</div>
+            <div style={{ fontWeight: 'bold', color: '#9cf' }} title="Mapped and normalized spectrum bands per your Audio Mapping settings">Frequency Bands (0..15)</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4 }}>
               {[b0,b1,b2,b3,b4,b5,b6,b7,b8,b9,b10,b11,b12,b13,b14,b15].map((v, i) => (
                 <div key={i} style={{ background: 'rgba(255,255,255,0.05)', padding: 2, borderRadius: 4 }}>
@@ -2026,16 +2217,150 @@ const ShaderLabImpl: React.FC<{ params: ShaderLabParams; frame: FeatureFrame | n
                 return <div key={i}>i{i}: midi={m.toFixed(1)}, amp={a.toFixed(2)}</div>;
               })}
             </div>
-            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Pitch Analysis</div>
+            <div style={{ fontWeight: 'bold', color: '#9cf' }} title="Smoothed pitch-class and polyphony blending used for tone colors">Pitch Analysis</div>
             <div>u_pcSmooth: {(uniforms as any).u_pcSmooth?.toFixed ? (uniforms as any).u_pcSmooth.toFixed(2) : String((uniforms as any).u_pcSmooth)} | u_pc2Smooth: {(uniforms as any).u_pc2Smooth?.toFixed ? (uniforms as any).u_pc2Smooth.toFixed(2) : String((uniforms as any).u_pc2Smooth)} | u_pc2Weight: {(uniforms as any).u_pc2Weight?.toFixed ? (uniforms as any).u_pc2Weight.toFixed(2) : String((uniforms as any).u_pc2Weight)}</div>
             <div>Chroma12: {Array.from(frame?.chroma12 || []).map((v: number, idx: number) => `${idx}:${v.toFixed(2)}`).join(' ') || 'n/a'}</div>
             <div>Key: {frame?.keyIndex != null ? frame.keyIndex : 'n/a'} {frame?.keyIsMajor ? 'Major' : (frame?.keyIsMajor===false ? 'Minor' : '')} | conf: {(frame?.keyConfidence ?? 0).toFixed(2)}</div>
-            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Audio Features</div>
+            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Chromatic Note Energy (12 pitch classes)</div>
+            {(() => {
+              const chroma = Array.from(frame?.chroma12 || []);
+              const max = chroma.reduce((m,v)=> Math.max(m,v), 1e-6);
+              return (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: 3, alignItems: 'end', height: 60 }}>
+                  {Array.from({length:12}).map((_,i)=>{
+                    const r = (pitchR?.[i] ?? 0); const g = (pitchG?.[i] ?? 0); const b = (pitchB?.[i] ?? 0);
+                    const rgb = `rgb(${Math.round(r*255)},${Math.round(g*255)},${Math.round(b*255)})`;
+                    const v = (chroma[i] || 0) / max;
+                    return (
+                      <div key={i} title={`Pitch Class ${i} amplitude`} style={{ background: 'rgba(255,255,255,0.07)', borderRadius: 3, height: '100%', display: 'flex', alignItems: 'flex-end' }}>
+                        <div style={{ width: '100%', height: `${Math.max(0, Math.min(1, v))*100}%`, background: rgb, borderRadius: 3 }} />
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Separation Indicators</div>
+            <div title="Heuristic scores from spectral flatness and zero-crossing (percussive) vs tonal concentration (harmonic)">
+              <div>Percussive: {(frame?.percussiveScore ?? 0).toFixed(2)}</div>
+              <div style={{ height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3, marginBottom: 4 }}>
+                <div style={{ width: `${Math.max(0, Math.min(1, frame?.percussiveScore ?? 0))*100}%`, height: '100%', background: '#f66', borderRadius: 3 }} />
+              </div>
+              <div>Harmonic: {(frame?.harmonicScore ?? 0).toFixed(2)}</div>
+              <div style={{ height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3 }}>
+                <div style={{ width: `${Math.max(0, Math.min(1, frame?.harmonicScore ?? 0))*100}%`, height: '100%', background: '#6f6', borderRadius: 3 }} />
+              </div>
+              {frame?.harmonicToNoiseRatio != null ? (
+                <div title="Harmonic-to-Noise Ratio (advanced)">HNR: {Number(frame.harmonicToNoiseRatio).toFixed(2)}</div>
+              ) : null}
+
+            </div>
+
+            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Resonance & Dissonance</div>
+            {(() => {
+              const notes = Array.from(frame?.notesMidi || []);
+              const amps = Array.from(frame?.notesAmp || []);
+              // Resonance: how well peaks align to harmonic series of lowest note
+              let resonance = 0;
+              if (notes.length > 0) {
+                const f0 = 440 * Math.pow(2, (notes.reduce((a,b)=> Math.min(a,b), 1e9) - 69)/12);
+                let matchSum = 0, ampSum = 0;
+                for (let k = 0; k < notes.length; k++) {
+                  const fk = 440 * Math.pow(2, (notes[k] - 69)/12);
+                  // distance to nearest harmonic of f0 (1..8)
+                  let best = 1e9;
+                  for (let h = 1; h <= 8; h++) {
+                    const harm = f0 * h;
+                    const rel = Math.abs((fk - harm) / Math.max(1e-3, harm));
+                    best = Math.min(best, rel);
+                  }
+                  const m = Math.exp(-best * 50); // sharper match -> closer to 1
+                  const a = amps[k] ?? 0;
+                  matchSum += m * a; ampSum += a;
+                }
+                resonance = ampSum > 0 ? matchSum / ampSum : 0;
+              }
+              // Dissonance: interval-based roughness between pairs using a simple consonance table
+              const iv = (a:number,b:number)=> Math.abs(a-b) % 12;
+              const consonance: Record<number, number> = { 0:1.0, 7:0.9, 5:0.85, 4:0.8, 3:0.8, 9:0.7, 2:0.5, 10:0.5, 8:0.4, 1:0.3, 11:0.3, 6:0.1 };
+              let cSum = 0, wSum = 0;
+              for (let i = 0; i < notes.length; i++) {
+                for (let j = i+1; j < notes.length; j++) {
+                  const cons = consonance[iv(notes[i], notes[j])] ?? 0.5;
+                  const w = (amps[i] ?? 0) * (amps[j] ?? 0);
+                  cSum += cons * w; wSum += w;
+                }
+              }
+              const consonanceScore = wSum > 0 ? cSum / wSum : 0;
+              const dissonance = 1 - consonanceScore;
+              const R = frame?.resonanceScore ?? resonance;
+              const D = frame?.dissonanceScore ?? dissonance;
+              return (
+                <div>
+                  <div title="Harmonic alignment of partials">Resonance: {R.toFixed(2)}</div>
+                  <div style={{ height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3, marginBottom: 4 }}>
+                    <div style={{ width: `${Math.max(0, Math.min(1, R))*100}%`, height: '100%', background: '#6cf', borderRadius: 3 }} />
+                  </div>
+                  <div title="Interval-based roughness (1 - consonance)">Dissonance: {D.toFixed(2)}</div>
+                  <div style={{ height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3 }}>
+                    <div style={{ width: `${Math.max(0, Math.min(1, D))*100}%`, height: '100%', background: '#c6f', borderRadius: 3 }} />
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Chord Detection</div>
+            {(() => {
+              if (frame?.chordName) {
+                return <div title="Advanced chord detection (opt-in)">{frame.chordName} | confidence: {(frame?.chordConfidence ?? 0).toFixed(2)}</div>;
+              }
+              const chroma = Array.from(frame?.chroma12 || []);
+              if (chroma.length !== 12) return <div>n/a</div>;
+              const triad = (root:number, kind:'M'|'m') => [root, (root+ (kind==='M'?4:3))%12, (root+7)%12];
+              let bestName = 'n/a', bestScore = -1;
+              for (let r = 0; r < 12; r++) {
+                for (const k of ['M','m'] as const) {
+                  const pcs = triad(r, k);
+                  const score = pcs.reduce((s,pc)=> s + (chroma[pc]||0), 0);
+                  if (score > bestScore) { bestScore = score; bestName = `${r}:${k==='M'?'maj':'min'}`; }
+                }
+              }
+              const conf = Math.max(0, Math.min(1, bestScore));
+              return <div title="Naive triad match from chroma">{bestName} | confidence: {conf.toFixed(2)}</div>;
+            })()}
+
+            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Pitch-Class vs Octave Grid</div>
+            {(() => {
+              const notes = Array.from(frame?.notesMidi || []);
+              const amps = Array.from(frame?.notesAmp || []);
+              if (!notes.length) return <div>n/a</div>;
+              const cells: number[][] = Array.from({length:10},()=> Array(12).fill(0));
+              for (let i = 0; i < notes.length; i++) {
+                const m = notes[i]; const a = amps[i] ?? 0;
+                if (m >= 0) { const oc = Math.max(0, Math.min(9, Math.floor(m/12))); const pc = ((Math.round(m)%12)+12)%12; cells[oc][pc] += a; }
+              }
+              return (
+                <div style={{ display: 'grid', gridTemplateRows: 'repeat(10, 10px)', gap: 2 }}>
+                  {cells.map((row, oc)=> (
+                    <div key={oc} style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: 2 }}>
+                      {row.map((v, pc)=> {
+                        const r = (pitchR?.[pc] ?? 0), g = (pitchG?.[pc] ?? 0), b = (pitchB?.[pc] ?? 0);
+                        const rgb = `rgba(${Math.round(r*255)},${Math.round(g*255)},${Math.round(b*255)}, ${Math.max(0.15, Math.min(1, v))})`;
+                        return <div key={pc} title={`Oc ${oc}, PC ${pc}: ${(v||0).toFixed(2)}`} style={{ background: rgb, borderRadius: 2 }} />;
+                      })}
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            <div style={{ fontWeight: 'bold', color: '#9cf' }} title="Low/Mid/High band averages, onset trigger and recent rate">Audio Features</div>
             <div>Low: {low.toFixed(2)} | Mid: {mid.toFixed(2)} | High: {high.toFixed(2)} | Onset: {onset}</div>
             <div>Onset rate: {(frame?.onsetRatePerSec ?? 0).toFixed(2)} /s</div>
-            <div style={{ fontWeight: 'bold', color: '#9cf' }}>MIDI</div>
+            <div style={{ fontWeight: 'bold', color: '#9cf' }} title="Dominant fractional MIDI note estimate (from dominant frequency)">MIDI</div>
             <div>Current Note: {(frame?.midiNote ?? -1).toFixed(1)} | Velocity: n/a | Channel: n/a</div>
-            <div style={{ fontWeight: 'bold', color: '#9cf' }}>Tone Mapping</div>
+            <div style={{ fontWeight: 'bold', color: '#9cf' }} title="Current 12-tone palette colors used for pitch classes">Tone Mapping</div>
             <div>themeB: {(storeState.themeBrightness ?? 1).toFixed(2)} | themeS: {(storeState.themeSaturation ?? 1).toFixed(2)}</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: 2 }}>
               {Array.from({length:12}).map((_,i)=>{
