@@ -261,6 +261,21 @@ export class AudioEngine {
       (this as any)._notesAmp = notesAmp;
       (this as any)._notesConf = notesConf;
 
+      // Declarations hoisted to precede advanced metrics usage
+      let bandEnergies: FeatureFrame['bandEnergies'] = undefined;
+      let vocalBandEnergy: number | undefined;
+      let percussiveScore: number | undefined;
+      let harmonicScore: number | undefined;
+      let chroma12: Float32Array | undefined;
+      let keyIndex: number | undefined;
+      let keyIsMajor: boolean | undefined;
+      let keyConfidence: number | undefined;
+      let chordName: string | undefined;
+      let chordConfidence: number | undefined;
+      let resonanceScore: number | undefined;
+      let dissonanceScore: number | undefined;
+      let harmonicToNoiseRatio: number | undefined;
+
 	      // Advanced metrics (opt-in)
 	      const adv2 = useStore.getState().advancedAnalysisEnabled;
 	      if (adv2) {
@@ -344,7 +359,7 @@ export class AudioEngine {
 	      }
 
     }
-    // crude band energies and onset (simple thresholded derivative of RMS)
+    // Hoisted declarations for analysis outputs
     let bandEnergies: FeatureFrame['bandEnergies'] = undefined;
     let vocalBandEnergy: number | undefined;
     let percussiveScore: number | undefined;
@@ -358,6 +373,9 @@ export class AudioEngine {
     let resonanceScore: number | undefined;
     let dissonanceScore: number | undefined;
     let harmonicToNoiseRatio: number | undefined;
+
+    // crude band energies and onset (simple thresholded derivative of RMS)
+
 
     if (spectrum && this.audioContext) {
       const n = spectrum.length;

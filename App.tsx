@@ -36,6 +36,17 @@ import { PanelManager } from './src/ui/PanelManager';
  
 
 export default function App() {
+  // Web-only dev harness gate: render harness if ?harness=1 is present
+  if (Platform.OS === 'web') {
+    try {
+      const qs = new URLSearchParams(window.location.search);
+      if (qs.get('harness') === '1') {
+        const { Harness } = require('./src/dev/Harness');
+        return <Harness />;
+      }
+    } catch {}
+  }
+
   const { visualizers, currentId, setVisualizer, params, audioSensitivity, rmsSmoothing, inputMode, showBandsOverlay, showHud, toneColorEnabled, toneColorKeyOffset, toneColorSaturation, toneColorLightness, toneColorMap, audioMapping, routes, themeBrightness, themeSaturation, setShowShaderLabUi, showHamburger, setShowHamburger, openPanel, fullscreen, setFullscreen } = useStore();
   const current = visualizers.find((v) => v.id === currentId)!;
   const [frame, setFrame] = React.useState<FeatureFrame | null>(null);
@@ -180,7 +191,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000',
     alignItems: 'stretch',
-    justifyContent: 'stretch',
+    justifyContent: 'flex-start',
   },
   header: {
     paddingTop: 40,

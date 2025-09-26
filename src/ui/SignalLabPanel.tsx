@@ -24,7 +24,7 @@ export const SignalLabPanel: React.FC = () => {
         {Platform.OS === 'web' ? (
           <>
             <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text style={{ color: '#ccc' }} title="Currently loaded Signal Lab preset (independent from sessions)">
+              <Text style={{ color: '#ccc' }}>
                 {currentSignalLabPreset ? `Preset: ${currentSignalLabPreset}` : 'Preset: (none)'}{signalLabDirty ? ' (modified)' : ''}
               </Text>
             </View>
@@ -75,7 +75,7 @@ export const SignalLabPanel: React.FC = () => {
         )}
         <View style={{ height: 8 }} />
 
-        <Text style={{ color: '#9cf' }} title="Master enable to apply envelopes, gating, and routing to uniforms">Enable</Text>
+        <Text style={{ color: '#9cf' }}>Enable</Text>
         <Text style={{ color: signalLab.enabled ? '#6f6' : '#ccc', textDecorationLine: 'underline' }} onPress={()=> setSignalLab({ enabled: !signalLab.enabled })}>
           {signalLab.enabled ? 'ON' : 'OFF'} — tap to toggle
         </Text>
@@ -84,49 +84,48 @@ export const SignalLabPanel: React.FC = () => {
         <Text
           style={{ color: advancedAnalysisEnabled ? '#6f6' : '#ccc', textDecorationLine: 'underline' }}
           onPress={() => setAdvancedAnalysisEnabled(!advancedAnalysisEnabled)}
-          title="Use enhanced polyphony, chord, resonance, HNR, dissonance"
         >
           Advanced Analysis {advancedAnalysisEnabled ? 'ON' : 'OFF'}
         </Text>
 
         <Text style={{ color: '#9cf', marginTop: 10 }}>Harmonic Analysis</Text>
-        <Text style={{ color: 'white' }} title="Max harmonics considered for fundamental grouping (1–12)">maxHarmonics: {signalLab.harmonic.maxHarmonics}</Text>
+        <Text style={{ color: 'white' }}>maxHarmonics: {signalLab.harmonic.maxHarmonics}</Text>
         {Platform.OS === 'web' ? (
           <input type="range" min={1} max={12} value={signalLab.harmonic.maxHarmonics}
             onChange={(e:any)=> setSignalLab({ harmonic: { ...signalLab.harmonic, maxHarmonics: Number(e.target.value) } })} />
         ) : null}
-        <Text style={{ color: 'white' }} title="Exponential closeness slope (20–120). Higher = stricter alignment">closenessSlope: {signalLab.harmonic.closenessSlope}</Text>
+        <Text style={{ color: 'white' }}>closenessSlope: {signalLab.harmonic.closenessSlope}</Text>
         {Platform.OS === 'web' ? (
           <input type="range" min={20} max={120} step={1} value={signalLab.harmonic.closenessSlope}
             onChange={(e:any)=> setSignalLab({ harmonic: { ...signalLab.harmonic, closenessSlope: Number(e.target.value) } })} />
         ) : null}
-        <Text style={{ color: 'white' }} title="Neighbor bins to include when sampling harmonics for HNR (0–2)">hnrNeighborBins: {signalLab.harmonic.hnrNeighborBins}</Text>
+        <Text style={{ color: 'white' }}>hnrNeighborBins: {signalLab.harmonic.hnrNeighborBins}</Text>
         {Platform.OS === 'web' ? (
           <input type="range" min={0} max={2} step={1} value={signalLab.harmonic.hnrNeighborBins}
             onChange={(e:any)=> setSignalLab({ harmonic: { ...signalLab.harmonic, hnrNeighborBins: Number(e.target.value) } })} />
         ) : null}
 
         <Text style={{ color: '#9cf', marginTop: 10 }}>Chord Detection</Text>
-        <Text style={{ color: 'white' }} title="Smoothing window for chord label (ms)">smoothingMs: {signalLab.chord.smoothingMs} ms</Text>
+        <Text style={{ color: 'white' }}>smoothingMs: {signalLab.chord.smoothingMs} ms</Text>
         {Platform.OS === 'web' ? (
           <input type="range" min={0} max={800} step={10} value={signalLab.chord.smoothingMs}
             onChange={(e:any)=> setSignalLab({ chord: { ...signalLab.chord, smoothingMs: Number(e.target.value) } })} />
         ) : null}
-        <Text style={{ color: 'white' }} title="Minimum confidence required to show advanced chord">minConfidence: {signalLab.chord.minConfidence.toFixed(2)}</Text>
+        <Text style={{ color: 'white' }}>minConfidence: {signalLab.chord.minConfidence.toFixed(2)}</Text>
         {Platform.OS === 'web' ? (
           <input type="range" min={0} max={1} step={0.01} value={signalLab.chord.minConfidence}
             onChange={(e:any)=> setSignalLab({ chord: { ...signalLab.chord, minConfidence: Number(e.target.value) } })} />
         ) : null}
 
         <Text style={{ color: '#9cf', marginTop: 10 }}>Dissonance</Text>
-        <Text style={{ color: 'white' }} title="Scale the roughness model strength (0–2)">strength: {signalLab.dissonance.strength.toFixed(2)}</Text>
+        <Text style={{ color: 'white' }}>strength: {signalLab.dissonance.strength.toFixed(2)}</Text>
         {Platform.OS === 'web' ? (
           <input type="range" min={0} max={2} step={0.05} value={signalLab.dissonance.strength}
             onChange={(e:any)=> setSignalLab({ dissonance: { ...signalLab.dissonance, strength: Number(e.target.value) } })} />
         ) : null}
 
         <Text style={{ color: '#9cf', marginTop: 10 }}>Envelopes (ms)</Text>
-        <Text style={{ color: 'white' }} title="RMS attack/release">RMS A/R: {signalLab.envelopes.rms.attackMs} / {signalLab.envelopes.rms.releaseMs}</Text>
+        <Text style={{ color: 'white' }}>RMS A/R: {signalLab.envelopes.rms.attackMs} / {signalLab.envelopes.rms.releaseMs}</Text>
         {Platform.OS === 'web' ? (
           <>
             <input type="range" min={0} max={500} step={5} value={signalLab.envelopes.rms.attackMs}
@@ -135,7 +134,7 @@ export const SignalLabPanel: React.FC = () => {
               onChange={(e:any)=> setSignalLab({ envelopes: { ...signalLab.envelopes, rms: { ...signalLab.envelopes.rms, releaseMs: Number(e.target.value) } } })} />
           </>
         ) : null}
-        <Text style={{ color: 'white' }} title="Band energies attack/release">Bands A/R: {signalLab.envelopes.bands.attackMs} / {signalLab.envelopes.bands.releaseMs}</Text>
+        <Text style={{ color: 'white' }}>Bands A/R: {signalLab.envelopes.bands.attackMs} / {signalLab.envelopes.bands.releaseMs}</Text>
         {Platform.OS === 'web' ? (
           <>
             <input type="range" min={0} max={400} step={5} value={signalLab.envelopes.bands.attackMs}
@@ -144,7 +143,7 @@ export const SignalLabPanel: React.FC = () => {
               onChange={(e:any)=> setSignalLab({ envelopes: { ...signalLab.envelopes, bands: { ...signalLab.envelopes.bands, releaseMs: Number(e.target.value) } } })} />
           </>
         ) : null}
-        <Text style={{ color: 'white' }} title="Note amplitude attack/release">Note Amp A/R: {signalLab.envelopes.noteAmp.attackMs} / {signalLab.envelopes.noteAmp.releaseMs}</Text>
+        <Text style={{ color: 'white' }}>Note Amp A/R: {signalLab.envelopes.noteAmp.attackMs} / {signalLab.envelopes.noteAmp.releaseMs}</Text>
         {Platform.OS === 'web' ? (
           <>
             <input type="range" min={0} max={200} step={5} value={signalLab.envelopes.noteAmp.attackMs}
@@ -153,22 +152,22 @@ export const SignalLabPanel: React.FC = () => {
               onChange={(e:any)=> setSignalLab({ envelopes: { ...signalLab.envelopes, noteAmp: { ...signalLab.envelopes.noteAmp, releaseMs: Number(e.target.value) } } })} />
           </>
         ) : null}
-        <Text style={{ color: 'white' }} title="Onset hold time; decays afterwards">Onset Hold: {signalLab.envelopes.onsetHoldMs} ms</Text>
+        <Text style={{ color: 'white' }}>Onset Hold: {signalLab.envelopes.onsetHoldMs} ms</Text>
         {Platform.OS === 'web' ? (
           <input type="range" min={0} max={500} step={10} value={signalLab.envelopes.onsetHoldMs}
             onChange={(e:any)=> setSignalLab({ envelopes: { ...signalLab.envelopes, onsetHoldMs: Number(e.target.value) } })} />
         ) : null}
 
         <Text style={{ color: '#9cf', marginTop: 10 }}>Note Gating</Text>
-        <Text style={{ color: signalLab.gating.enableNoteGating ? '#6f6' : '#ccc', textDecorationLine: 'underline' }} onPress={()=> setSignalLab({ gating: { ...signalLab.gating, enableNoteGating: !signalLab.gating.enableNoteGating } })} title="Suppress low-confidence or weak notes">
+        <Text style={{ color: signalLab.gating.enableNoteGating ? '#6f6' : '#ccc', textDecorationLine: 'underline' }} onPress={()=> setSignalLab({ gating: { ...signalLab.gating, enableNoteGating: !signalLab.gating.enableNoteGating } })}>
           Gating: {signalLab.gating.enableNoteGating ? 'ON' : 'OFF'}
         </Text>
-        <Text style={{ color: 'white' }} title="Minimum per-note confidence">minConf: {signalLab.gating.noteMinConfidence.toFixed(2)}</Text>
+        <Text style={{ color: 'white' }}>minConf: {signalLab.gating.noteMinConfidence.toFixed(2)}</Text>
         {Platform.OS === 'web' ? (
           <input type="range" min={0} max={1} step={0.01} value={signalLab.gating.noteMinConfidence}
             onChange={(e:any)=> setSignalLab({ gating: { ...signalLab.gating, noteMinConfidence: Number(e.target.value) } })} />
         ) : null}
-        <Text style={{ color: 'white' }} title="Minimum raw amplitude">minAmp: {signalLab.gating.noteMinAmp.toFixed(2)}</Text>
+        <Text style={{ color: 'white' }}>minAmp: {signalLab.gating.noteMinAmp.toFixed(2)}</Text>
         {Platform.OS === 'web' ? (
           <input type="range" min={0} max={0.2} step={0.005} value={signalLab.gating.noteMinAmp}
             onChange={(e:any)=> setSignalLab({ gating: { ...signalLab.gating, noteMinAmp: Number(e.target.value) } })} />

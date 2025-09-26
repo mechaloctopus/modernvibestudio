@@ -12,7 +12,7 @@ import type { FeatureFrame } from '../core/types';
 export const Inspector: React.FC<{ frame: FeatureFrame | null }>= ({ frame }) => {
   const { activeInspectorTab, setActiveInspectorTab, currentId } = useStore();
   const baseTabs: Array<'Params'|'Routing'|'Audio'|'Tone'|'Uniforms'> = ['Params','Routing','Audio','Tone','Uniforms'];
-  const tabs = baseTabs as const;
+  const tabs = baseTabs;
   return (
     <View style={{ width: 380, backgroundColor: 'rgba(0,0,0,0.35)', borderLeftWidth: 1, borderColor: '#222' }}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ padding: 8, borderBottomWidth: 1, borderColor: '#222' }} contentContainerStyle={{ flexDirection: 'row', gap: 4 }}>

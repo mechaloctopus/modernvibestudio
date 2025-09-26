@@ -64,7 +64,7 @@ const LightningImpl: React.FC<{ params: LightningParams; frame: FeatureFrame | n
   const themeB = 1 + ((global?.themeBrightness ?? 1.0) - 1) * themeInfluence;
   const themeS = 1 + ((global?.themeSaturation ?? 1.0) - 1) * themeInfluence;
 
-  const bolts = [] as JSX.Element[];
+  const bolts: React.ReactElement[] = [];
   // Ensure distinct note-driven colors per bolt when tone color enabled
   const noteCount = Math.max(0, Math.min(4, (frame?.notesMidi?.length || 0)));
   // If we have notes, prefer at least one bolt per top note (up to 4)

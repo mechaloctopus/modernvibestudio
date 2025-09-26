@@ -77,7 +77,7 @@ const MandalaImpl: React.FC<{ params: MandalaParams; frame: FeatureFrame | null 
   const maxR = Math.min(cx, cy);
   const layers = Math.max(1, Math.floor(params.layers ?? 3));
   const rings = 24 * layers;
-  const nodes = [] as JSX.Element[];
+  const nodes: React.ReactElement[] = [];
   const ripple = Math.max(0, Math.min(1, params.rippleStrength ?? 0.3));
   for (let i = 0; i < rings; i++) {
     const f = i / rings;
@@ -91,7 +91,7 @@ const MandalaImpl: React.FC<{ params: MandalaParams; frame: FeatureFrame | null 
         fill={`rgba(${Math.floor(base.r*255)},${Math.floor(base.g*255)},${Math.floor(base.b*255)},${(0.15+0.35*amp)*opacity})`} />
     );
   }
-  const petalsGroup = [] as JSX.Element[];
+  const petalsGroup: React.ReactElement[] = [];
   const bands = (params as any)._global?.mappedBands as number[] | undefined;
   const notes = frame?.notesMidi; const notesAmp = frame?.notesAmp;
   // Smooth top-note amplitudes to reduce color blinking
@@ -178,7 +178,7 @@ const MandalaImpl: React.FC<{ params: MandalaParams; frame: FeatureFrame | null 
     cur.onset = Math.max((1 - 0.12) * cur.onset, on);
   }, [frame]);
 
-  const groupOrbs: JSX.Element[] = [];
+  const groupOrbs: React.ReactElement[] = [];
   const loAmp = smoothRef.current.low;
   const miAmp = smoothRef.current.mid;
   const hiAmp = smoothRef.current.high;
@@ -200,7 +200,7 @@ const MandalaImpl: React.FC<{ params: MandalaParams; frame: FeatureFrame | null 
     orb(0, 0, rOrb * (0.25 + 0.9 * onAmp), onCol, 0.2 + 0.6 * onAmp, 'orb-onset'),
   );
   // Extra shapes: rotating small circles forming cymatic-like nodes
-  const extraShapes = [] as JSX.Element[];
+  const extraShapes: React.ReactElement[] = [];
   const shapeCount = Math.max(0, Math.floor(params.shapeCount ?? 12));
   const shapeSize = Math.max(0.002, params.shapeSize ?? 0.06);
   // Smooth bands (mapped) for stable glow
@@ -269,7 +269,7 @@ const MandalaImpl: React.FC<{ params: MandalaParams; frame: FeatureFrame | null 
         fill={`rgba(${Math.floor(colrgb.r*255)},${Math.floor(colrgb.g*255)},${Math.floor(colrgb.b*255)},${alpha})`} />
     );
   }
-  const blips: JSX.Element[] = [];
+  const blips: React.ReactElement[] = [];
   const numBlips = Math.max(0, Math.min(100, Math.floor(params.blips ?? 12)));
   for (let i = 0; i < numBlips; i++) {
     const seed = (t.current/1000 + i * 13.37);

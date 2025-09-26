@@ -10,7 +10,7 @@ export const BandsOverlay: React.FC<{ frame: FeatureFrame | null }>= ({ frame })
   const bands = applySpectrumMapping(frame?.spectrum, frame?.sampleRateHz, audioMapping);
   const w = 160, h = 48;
   const barW = bands.length > 0 ? w / bands.length : 0;
-  const rects = [] as JSX.Element[];
+  const rects: React.ReactElement[] = [];
   for (let i = 0; i < bands.length; i++) {
     const v = Math.max(0, Math.min(1, bands[i]));
     const bh = v * h;
